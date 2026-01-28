@@ -130,7 +130,7 @@ export default function App() {
 
   // --- INITIALIZATION: FETCH MENU & USER ---
   useEffect(() => {
-    document.title = 'Morpho Order App';
+    document.title = 'Morpho App';
     let link = document.querySelector("link[rel~='icon']");
     if (!link) {
       link = document.createElement('link');
