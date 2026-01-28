@@ -41,7 +41,7 @@ const GoogleIcon = () => (
       fill="#4285F4"
     />
     <path
-      d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"
+      d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.04-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"
       fill="#34A853"
     />
     <path
@@ -144,6 +144,13 @@ const LoginScreen = ({
     setError('');
     try {
       const provider = new GoogleAuthProvider();
+      
+      // --- UPDATE: Force account selection ---
+      provider.setCustomParameters({
+        prompt: 'select_account'
+      });
+      // -------------------------------------
+
       const result = await signInWithPopup(auth, provider);
       const user = result.user;
 
