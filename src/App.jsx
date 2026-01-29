@@ -247,53 +247,81 @@ export default function App() {
     [favorites]
   );
 
-  // --- STATUS POLLING ---
+  // --- STATUS POLLING (CLOUD SYNC) ---
   useEffect(() => {
     let intervalId;
-    if (activeOrders.length > 0) {
-      const checkAllStatuses = async () => {
-        const promises = activeOrders.map(async (order) => {
-          if (['delivered', 'cancelled'].includes(order.status)) return order;
-          try {
-            const response = await fetch(
-              `${GOOGLE_SCRIPT_URL}?action=getStatus&orderId=${
-                order.id
-              }&_=${Date.now()}`
-            );
-            if (response.ok) {
-              const data = await response.json();
-              if (data && data.status) {
-                const normalized = data.status
-                  .toLowerCase()
-                  .replace(/\s+/g, '');
-                let final = normalized;
-                if (normalized.includes('place')) final = 'placed';
-                else if (normalized.includes('prepar')) final = 'preparing';
-                else if (normalized.includes('way')) final = 'ontheway';
-                else if (normalized.includes('deliver')) final = 'delivered';
-                else if (normalized.includes('arrive')) final = 'arrived';
 
-                if (order.status !== 'arrived' && final === 'arrived') {
-                  playNotificationSound('rider');
-                  setShowArrivedModal(true);
+    // Only poll if a user is logged in
+    if (user && user.phone) {
+      const syncOrders = async () => {
+        try {
+          // 1. Ask Cloud for ALL active orders for this phone number
+          const response = await fetch(
+            `${GOOGLE_SCRIPT_URL}?action=getCustomerActiveOrders&phone=${user.phone}&_=${Date.now()}`
+          );
+
+          if (response.ok) {
+            const data = await response.json();
+            
+            if (data.orders) {
+              setActiveOrders((prevLocalOrders) => {
+                const serverOrders = data.orders;
+                
+                // Map server data to our local format
+                const mergedOrders = serverOrders.map(serverOrder => {
+                  const localMatch = prevLocalOrders.find(local => local.id === serverOrder.id);
+                  
+                  // --- PRESERVED LOGIC: STATUS NORMALIZATION ---
+                  // We must clean the text from Google Sheet to match your App's CSS keys
+                  const rawStatus = serverOrder.status || '';
+                  const normalized = rawStatus.toLowerCase().replace(/\s+/g, '');
+                  let finalStatus = normalized;
+                  
+                  if (normalized.includes('place')) finalStatus = 'placed';
+                  else if (normalized.includes('prepar')) finalStatus = 'preparing';
+                  else if (normalized.includes('way')) finalStatus = 'ontheway';
+                  else if (normalized.includes('deliver')) finalStatus = 'delivered';
+                  else if (normalized.includes('arrive')) finalStatus = 'arrived';
+                  else if (normalized.includes('cancel')) finalStatus = 'cancelled'; 
+                  else if (normalized.includes('decline')) finalStatus = 'cancelled';
+
+                  // --- PRESERVED LOGIC: NOTIFICATIONS ---
+                  // Only play sound if status CHANGED to 'arrived'
+                  if (localMatch && localMatch.status !== 'arrived' && finalStatus === 'arrived') {
+                     playNotificationSound('rider');
+                     setShowArrivedModal(true);
+                  }
+
+                  return {
+                    ...serverOrder,
+                    status: finalStatus, // Use the clean status
+                    // Keep detailed info (like full item list) from local memory if we have it
+                    // This ensures the receipt looks good on the device that placed the order
+                    items: localMatch?.items?.length ? localMatch.items : [], 
+                    itemsSummary: localMatch?.itemsSummary || serverOrder.itemsSummary
+                  };
+                });
+
+                // Optimization: Only update React state if something actually changed
+                if (JSON.stringify(mergedOrders) !== JSON.stringify(prevLocalOrders)) {
+                    return mergedOrders;
                 }
-                if (order.status !== final) return { ...order, status: final };
-              }
+                return prevLocalOrders;
+              });
             }
-          } catch (e) {
-            console.error('Polling error', e);
           }
-          return order;
-        });
-        const updatedOrders = await Promise.all(promises);
-        if (JSON.stringify(updatedOrders) !== JSON.stringify(activeOrders))
-          setActiveOrders(updatedOrders);
+        } catch (e) {
+          console.error('Sync error', e);
+        }
       };
-      checkAllStatuses();
-      intervalId = setInterval(checkAllStatuses, 5000);
+
+      // Run immediately on load, then every 5 seconds
+      syncOrders();
+      intervalId = setInterval(syncOrders, 5000);
     }
+
     return () => clearInterval(intervalId);
-  }, [activeOrders]);
+  }, [user]); // Dependency is 'user', not 'activeOrders', so it works on new devices
 
   // 3. HANDLERS
   const handleLogin = (userProfile) => {

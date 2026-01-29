@@ -56,6 +56,9 @@ const Cart = ({
   const pollTimer = useRef(null);
   const paymentWindowRef = useRef(null);
   
+  // SAFETY LOCK: Prevents double-saving if internet is slow
+  const isSaving = useRef(false); 
+  
   // PERSIST ORDER ID (So we don't lose it during re-renders)
   const orderIdRef = useRef(`ORD-${Math.floor(100000 + Math.random() * 900000)}`);
 
@@ -68,8 +71,7 @@ const Cart = ({
     }
   }, [userProfile]);
 
-  // --- HELPER: FINALIZE ORDER ---
-  // FIXED: Now saves ALL details so Active Orders tab works correctly
+  // --- HELPER: FINALIZE ORDER (Local UI Update) ---
   const finalizeOrder = (status) => {
     const finalFee = orderMode === 'Delivery' ? deliveryFee : 0;
     const subtotal = cartItems.reduce((sum, item) => sum + (Number(item.finalPrice || item.price) * Number(item.qty || item.quantity)), 0);
@@ -104,10 +106,43 @@ const Cart = ({
     onSuccess(newOrder); // Send complete object to App.jsx
   };
 
+  // --- HELPER: SAVE TO SHEET (Cloud Sync) ---
+  // This ensures the order exists in the cloud so other devices can see it
+  const saveOrderToSheet = async (status, method) => {
+    const finalFee = orderMode === 'Delivery' ? deliveryFee : 0;
+    const subtotal = cartItems.reduce((sum, item) => sum + (Number(item.finalPrice || item.price) * Number(item.qty || item.quantity)), 0);
+    const total = subtotal + finalFee;
+    const itemsSummary = cartItems.map(item => `${item.qty || item.quantity}x ${item.name} ${item.selectedVariant ? '['+item.selectedVariant+']' : ''}`).join(', ');
+
+    const payload = {
+        orderId: orderIdRef.current,
+        name: userProfile.name,
+        phone: userProfile.phone,
+        address: orderMode === 'Delivery' ? address : 'N/A',
+        items: itemsSummary,
+        total: total,
+        payment: method,
+        orderMode: orderMode,
+        time: selectedTime,
+        landmark: "N/A"
+    };
+
+    // Send to Google Sheet
+    await fetch(GOOGLE_SCRIPT_URL, {
+        method: 'POST',
+        mode: 'no-cors',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+    });
+  };
+
   // --- POLLING LOGIC ---
   useEffect(() => {
     if (waitingForPayment && currentInvoiceId) {
       const checkStatus = async () => {
+        // SAFETY LOCK: If we are already saving, DO NOT check again. Wait.
+        if (isSaving.current) return;
+
         try {
           const response = await fetch(GOOGLE_SCRIPT_URL, {
             method: 'POST',
@@ -122,10 +157,16 @@ const Cart = ({
             clearInterval(pollTimer.current);
             if (paymentWindowRef.current) paymentWindowRef.current.close();
             
+            // LOCK THE PROCESS
+            isSaving.current = true;
+            
+            // 1. SAVE TO SHEET (Wait for it to finish)
+            await saveOrderToSheet('placed', 'GCash/Maya');
+
             setWaitingForPayment(false);
             setLoading(false);
             
-            // SUCCESS! Pass the order to the main app
+            // 2. SUCCESS! Pass the order to the main app
             finalizeOrder('placed'); 
 
           } else if (data.paymentStatus === 'EXPIRED') {
@@ -137,6 +178,7 @@ const Cart = ({
           }
         } catch (e) {
           console.log("Polling error (ignoring):", e);
+          // Note: We do NOT set isSaving=true here, so it retries on next poll
         }
       };
 
@@ -182,6 +224,8 @@ const Cart = ({
     }
 
     setLoading(true);
+    isSaving.current = false; // Reset lock for new attempt
+
     const itemsSummary = cartItems.map(item => `${item.qty || item.quantity}x ${item.name}`).join(', ');
     
     // Regenerate ID if needed, or use Ref
@@ -226,34 +270,15 @@ const Cart = ({
     }
   };
 
-  const handleCODCheckout = () => {
+  const handleCODCheckout = async () => {
     setLoading(true);
-    const orderId = orderIdRef.current; // Use consistent ID
     
-    const itemsSummary = cartItems.map(i => {
-        const addonStr = i.selectedAddOns?.map(a => a.name).join(', ') || '';
-        return `${i.quantity}x ${i.name} ${i.selectedVariant ? '['+i.selectedVariant+']' : ''} ${addonStr ? '('+addonStr+')' : ''}`;
-    }).join('\n');
+    // LOCK PROCESS
+    if (isSaving.current) return;
+    isSaving.current = true;
 
-    const payload = {
-        orderId,
-        name: userProfile.name,
-        phone: userProfile.phone,
-        address: orderMode === 'Delivery' ? address : 'N/A',
-        items: itemsSummary,
-        total,
-        payment: "Cash",
-        orderMode,
-        time: selectedTime,
-        landmark: "N/A"
-    };
-
-    fetch(GOOGLE_SCRIPT_URL, {
-        method: 'POST',
-        mode: 'no-cors',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
-    });
+    // SAVE TO SHEET IMMEDIATELY
+    await saveOrderToSheet('placed', 'Cash');
 
     setTimeout(() => {
         setLoading(false);
@@ -300,6 +325,7 @@ const Cart = ({
                     onClick={() => {
                         setWaitingForPayment(false);
                         setLoading(false);
+                        isSaving.current = false; // Release lock on cancel
                         if (pollTimer.current) clearInterval(pollTimer.current);
                         if (paymentWindowRef.current) paymentWindowRef.current.close();
                     }}
