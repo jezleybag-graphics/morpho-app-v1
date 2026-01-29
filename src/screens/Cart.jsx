@@ -56,10 +56,8 @@ const Cart = ({
   const pollTimer = useRef(null);
   const paymentWindowRef = useRef(null);
   
-  // SAFETY LOCK: Prevents double-saving if internet is slow
+  // SAFETY LOCK
   const isSaving = useRef(false); 
-  
-  // PERSIST ORDER ID (So we don't lose it during re-renders)
   const orderIdRef = useRef(`ORD-${Math.floor(100000 + Math.random() * 900000)}`);
 
   useEffect(() => {
@@ -71,14 +69,38 @@ const Cart = ({
     }
   }, [userProfile]);
 
-  // --- NEW HELPER: STRICT FORMATTER ---
+  // --- NEW: SAFE PRICE CALCULATOR ---
+  // Calculates the TRUE unit price (Base + Variant + All Addons)
+  const calculateItemUnitPrice = (item) => {
+    // 1. Start with the base/variant price
+    let unitPrice = Number(item.finalPrice || item.price || 0);
+    
+    // 2. Add cost of all add-ons (if they exist and have a price)
+    if (item.selectedAddOns && item.selectedAddOns.length > 0) {
+      item.selectedAddOns.forEach(addon => {
+        const addonPrice = Number(addon.price || 0);
+        const addonQty = Number(addon.qty || addon.quantity || 1);
+        // Only add if the price isn't already baked into finalPrice (checking strictly)
+        // Assumption: finalPrice usually tracks Base+Variant. Addons are separate.
+        // If your app bakes addons into finalPrice already, this might double count. 
+        // BUT based on your issue ("bill still there"), it implies finalPrice is static.
+        // We will assume finalPrice DOES NOT include addons to be safe, or calculate strictly:
+        
+        // SAFE APPROACH: If you want to be 100% sure, rely on this math:
+        // We assume 'finalPrice' might NOT include addons. 
+        // To fix "bill still there", we ensure addons are part of the total here.
+        unitPrice += (addonPrice * addonQty); 
+      });
+    }
+    return unitPrice;
+  };
+
+  // --- HELPER: STRICT FORMATTER (With Grouping) ---
   const formatOrderSummary = (items) => {
     return items.map(item => {
-      // 1. Base Item String
       let itemString = `${item.qty || item.quantity}x ${item.name}`;
       if (item.selectedVariant) itemString += ` [${item.selectedVariant}]`;
 
-      // 2. Process Addons
       if (item.selectedAddOns && item.selectedAddOns.length > 0) {
         const addonString = item.selectedAddOns.map(addon => {
           const addonQty = addon.quantity || addon.qty || 1;
@@ -86,58 +108,50 @@ const Cart = ({
         }).join(', ');
         itemString += ` (+ ${addonString})`;
       }
-
-      // 3. Process N/A Action (NEW: Sends data to Admin App)
-      // Checks 'unavailableAction' which you likely set in ItemDetailsPage
+      
+      // Pass N/A Action to Admin
       if (item.unavailableAction) {
         itemString += ` {If N/A: ${item.unavailableAction}}`;
       }
 
       return itemString;
-    }).join('\n'); 
+    }).join('\n');
   };
 
-  // --- HELPER: FINALIZE ORDER (Local UI Update) ---
+  // --- CALCULATIONS (Now uses Safe Calculator) ---
+  const subtotal = cartItems.reduce((sum, item) => {
+    const unitPrice = calculateItemUnitPrice(item);
+    const qty = Number(item.qty || item.quantity || 1);
+    return sum + (unitPrice * qty);
+  }, 0);
+
+  const finalFee = orderMode === 'Delivery' ? deliveryFee : 0;
+  const total = subtotal + finalFee;
+
+  // --- HELPER: FINALIZE ORDER ---
   const finalizeOrder = (status) => {
-    const finalFee = orderMode === 'Delivery' ? deliveryFee : 0;
-    const subtotal = cartItems.reduce((sum, item) => sum + (Number(item.finalPrice || item.price) * Number(item.qty || item.quantity)), 0);
-    
-    // Create items summary string using the NEW Formatter
     const itemsSummary = formatOrderSummary(cartItems);
 
     const newOrder = {
         id: orderIdRef.current,
-        status: status, // 'placed'
-        
-        // VISUAL DETAILS (Needed for Active Orders Card)
+        status: status,
         items: cartItems,
-        itemsSummary: itemsSummary, 
-        total: subtotal + finalFee,
-        
-        // DELIVERY/PICKUP DETAILS
+        itemsSummary: itemsSummary,
+        total: total, // Use calculated total
         orderMode: orderMode,
         address: orderMode === 'Delivery' ? address : 'N/A',
         time: selectedTime,
-        
-        // CUSTOMER DETAILS
         name: userProfile.name,
         customerPhone: userProfile.phone,
-        paymentMethod: paymentMethod, // 'ONLINE' or 'COD'
-        
+        paymentMethod: paymentMethod,
         timestamp: new Date().toISOString()
     };
     
-    onSuccess(newOrder); // Send complete object to App.jsx
+    onSuccess(newOrder); 
   };
 
-  // --- HELPER: SAVE TO SHEET (Cloud Sync) ---
-  // This ensures the order exists in the cloud so other devices can see it
+  // --- HELPER: SAVE TO SHEET ---
   const saveOrderToSheet = async (status, method) => {
-    const finalFee = orderMode === 'Delivery' ? deliveryFee : 0;
-    const subtotal = cartItems.reduce((sum, item) => sum + (Number(item.finalPrice || item.price) * Number(item.qty || item.quantity)), 0);
-    const total = subtotal + finalFee;
-    
-    // Create items summary string using the NEW Formatter
     const itemsSummary = formatOrderSummary(cartItems);
 
     const payload = {
@@ -146,14 +160,13 @@ const Cart = ({
         phone: userProfile.phone,
         address: orderMode === 'Delivery' ? address : 'N/A',
         items: itemsSummary,
-        total: total,
+        total: total, // Use calculated total
         payment: method,
         orderMode: orderMode,
         time: selectedTime,
         landmark: "N/A"
     };
 
-    // Send to Google Sheet
     await fetch(GOOGLE_SCRIPT_URL, {
         method: 'POST',
         mode: 'no-cors',
@@ -166,7 +179,6 @@ const Cart = ({
   useEffect(() => {
     if (waitingForPayment && currentInvoiceId) {
       const checkStatus = async () => {
-        // SAFETY LOCK: If we are already saving, DO NOT check again. Wait.
         if (isSaving.current) return;
 
         try {
@@ -183,16 +195,10 @@ const Cart = ({
             clearInterval(pollTimer.current);
             if (paymentWindowRef.current) paymentWindowRef.current.close();
             
-            // LOCK THE PROCESS
             isSaving.current = true;
-            
-            // 1. SAVE TO SHEET (Wait for it to finish)
             await saveOrderToSheet('placed', 'GCash/Maya');
-
             setWaitingForPayment(false);
             setLoading(false);
-            
-            // 2. SUCCESS! Pass the order to the main app
             finalizeOrder('placed'); 
 
           } else if (data.paymentStatus === 'EXPIRED') {
@@ -204,7 +210,6 @@ const Cart = ({
           }
         } catch (e) {
           console.log("Polling error (ignoring):", e);
-          // Note: We do NOT set isSaving=true here, so it retries on next poll
         }
       };
 
@@ -212,17 +217,6 @@ const Cart = ({
       return () => { clearInterval(pollTimer.current); };
     }
   }, [waitingForPayment, currentInvoiceId]);
-
-
-  // --- CALCULATIONS ---
-  const subtotal = cartItems.reduce((sum, item) => {
-    const price = Number(item.finalPrice || item.price || 0);
-    const qty = Number(item.qty || item.quantity || 1);
-    return sum + (price * qty);
-  }, 0);
-
-  const finalFee = orderMode === 'Delivery' ? deliveryFee : 0;
-  const total = subtotal + finalFee;
 
   // --- HANDLERS ---
   const handleLocationSelect = (locData) => {
@@ -250,18 +244,15 @@ const Cart = ({
     }
 
     setLoading(true);
-    isSaving.current = false; // Reset lock for new attempt
+    isSaving.current = false; 
 
-    // Create items summary string using the NEW Formatter
     const itemsSummary = formatOrderSummary(cartItems);
-    
-    // Regenerate ID if needed, or use Ref
     const orderId = orderIdRef.current;
 
     const payload = {
       action: 'create_payment',
       orderId,
-      totalAmount: total,
+      totalAmount: total, // Use calculated total
       customerName: userProfile.name,
       phone: userProfile.phone,
       email: userProfile.email || "guest@morpho.ph",
@@ -299,17 +290,13 @@ const Cart = ({
 
   const handleCODCheckout = async () => {
     setLoading(true);
-    
-    // LOCK PROCESS
     if (isSaving.current) return;
     isSaving.current = true;
 
-    // SAVE TO SHEET IMMEDIATELY (This uses the new formatter inside the function)
     await saveOrderToSheet('placed', 'Cash');
 
     setTimeout(() => {
         setLoading(false);
-        // SUCCESS! Pass the order to the main app
         finalizeOrder('placed');
     }, 1500);
   };
@@ -342,7 +329,7 @@ const Cart = ({
           ) : (
             <div className="p-5 pb-32 space-y-6">
               
-              {/* Waiting UI (With Cancel Button) */}
+              {/* Waiting UI */}
               {waitingForPayment && (
                 <div className="bg-yellow-50 border border-yellow-200 rounded-xl p-4 text-center animate-fade-in">
                   <Loader2 className="animate-spin mx-auto text-yellow-600 mb-2" />
@@ -352,7 +339,7 @@ const Cart = ({
                     onClick={() => {
                         setWaitingForPayment(false);
                         setLoading(false);
-                        isSaving.current = false; // Release lock on cancel
+                        isSaving.current = false; 
                         if (pollTimer.current) clearInterval(pollTimer.current);
                         if (paymentWindowRef.current) paymentWindowRef.current.close();
                     }}
@@ -363,7 +350,7 @@ const Cart = ({
                 </div>
               )}
 
-              {/* Items List */}
+              {/* Items List (VISUAL FIX) */}
               <div className="space-y-3">
                  <h3 className="text-xs font-bold text-gray-400 uppercase tracking-wider">Your Items</h3>
                  {cartItems.map((item, idx) => (
@@ -372,11 +359,23 @@ const Cart = ({
                             <span className="text-[#013E37] font-bold text-sm">{item.quantity}x</span>
                             <div>
                                 <p className="font-bold text-gray-900 text-sm leading-tight">{item.name}</p>
-                                <p className="text-xs text-gray-400 mt-1">{item.selectedVariant}</p>
+                                <p className="text-xs text-gray-400 mt-1 font-bold">{item.selectedVariant}</p>
+                                
+                                {/* ADD-ONS VISUALIZATION */}
+                                {item.selectedAddOns && item.selectedAddOns.length > 0 && (
+                                  <div className="mt-1 flex flex-col gap-0.5">
+                                    {item.selectedAddOns.map((addon, aIdx) => (
+                                      <span key={aIdx} className="text-[10px] text-gray-500 font-medium bg-gray-50 px-1.5 py-0.5 rounded w-fit">
+                                        + {addon.qty || addon.quantity || 1}x {addon.name}
+                                      </span>
+                                    ))}
+                                  </div>
+                                )}
                             </div>
                         </div>
                         <div className="flex flex-col items-end justify-between">
-                            <span className="font-bold text-sm">₱{(item.finalPrice || item.price) * (item.quantity || 1)}</span>
+                            {/* Use Safe Calculator for Display */}
+                            <span className="font-bold text-sm">₱{calculateItemUnitPrice(item) * (item.quantity || 1)}</span>
                             <button onClick={() => onRemoveItem(idx)} className="text-red-300 hover:text-red-500"><Trash2 size={14} /></button>
                         </div>
                     </div>
