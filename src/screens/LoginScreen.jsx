@@ -111,16 +111,13 @@ const LoginScreen = ({
       setProfile(initialData);
       setAuthStep('EDIT_PROFILE');
     } else {
-      // Check for existing user on device for quick PIN login
       const saved = localStorage.getItem('smart_menu_user');
       if (saved) {
         try {
           const user = JSON.parse(saved);
           setFoundUser(user);
           setAuthStep('PIN');
-        } catch (e) {
-          // ignore error
-        }
+        } catch (e) {}
       }
     }
   }, [initialData]);
@@ -144,10 +141,7 @@ const LoginScreen = ({
     setError('');
     try {
       const provider = new GoogleAuthProvider();
-      
-      provider.setCustomParameters({
-        prompt: 'select_account'
-      });
+      provider.setCustomParameters({ prompt: 'select_account' });
 
       const result = await signInWithPopup(auth, provider);
       const user = result.user;
@@ -167,20 +161,22 @@ const LoginScreen = ({
         setRegProfilePic(user.photoURL);
         setAuthStep('REGISTER_FORM');
       }
+      // Successful login path doesn't need setLoading(false) here because component unmounts
     } catch (err) {
       console.error('Google Auth Error:', err);
-      if (err.code === 'auth/popup-closed-by-user') return;
+      setLoading(false); // Fix: Reset loading immediately on ANY error
+      
+      if (err.code === 'auth/popup-closed-by-user' || err.code === 'auth/cancelled-popup-request') {
+        return; // Silent return for user cancellation
+      }
+
       if (err.code === 'auth/unauthorized-domain') {
-        setError(
-          `Domain blocked. Add "${window.location.hostname}" to Firebase Console.`
-        );
+        setError(`Domain blocked. Add "${window.location.hostname}" to Firebase Console.`);
       } else if (err.code === 'auth/operation-not-allowed') {
         setError('Google provider is not enabled in Firebase Console.');
       } else {
         setError(err.message.replace('Firebase: ', ''));
       }
-    } finally {
-      setLoading(false);
     }
   };
 
@@ -488,7 +484,6 @@ const LoginScreen = ({
 
   // --- RENDER VIEWS ---
 
-  // 1. Welcome Screen
   if (authStep === 'WELCOME') {
     return (
       <div className="min-h-[100dvh] bg-[#F4F3F2] flex flex-col justify-center p-8 animate-fade-in relative overflow-hidden">
@@ -536,7 +531,7 @@ const LoginScreen = ({
           )}
         </div>
 
-        {/* --- ADDED: Privacy Policy Link for Google Verification --- */}
+        {/* --- Privacy Policy Link for Google Verification --- */}
         <div className="mt-12 text-center relative z-10">
           <p className="text-[10px] text-gray-500 font-medium uppercase tracking-widest mb-2">
             By signing in, you agree to our{' '}
@@ -556,7 +551,6 @@ const LoginScreen = ({
     );
   }
 
-  // 1.5 Phone Entry
   if (authStep === 'PHONE_ENTRY') {
     return (
       <div className="min-h-[100dvh] bg-[#F4F3F2] flex flex-col justify-center p-8 animate-fade-in">
@@ -608,7 +602,6 @@ const LoginScreen = ({
     );
   }
 
-  // 1.6 Forgot PIN
   if (authStep === 'FORGOT_PIN') {
     return (
       <div className="min-h-[100dvh] bg-[#F4F3F2] flex flex-col justify-center p-8 animate-fade-in">
@@ -669,7 +662,6 @@ const LoginScreen = ({
     );
   }
 
-  // 1.7 Reset PIN
   if (authStep === 'RESET_PIN') {
     return (
       <div className="min-h-[100dvh] bg-[#F4F3F2] flex flex-col justify-center p-6 animate-fade-in">
@@ -741,7 +733,6 @@ const LoginScreen = ({
     );
   }
 
-  // 2. Registration Form
   if (authStep === 'REGISTER_FORM') {
     return (
       <div className="min-h-[100dvh] bg-[#F4F3F2] flex flex-col p-6 animate-fade-in">
@@ -875,7 +866,6 @@ const LoginScreen = ({
     );
   }
 
-  // 3. PIN Verification
   if (authStep === 'PIN') {
     return (
       <div className="min-h-[100dvh] bg-[#F4F3F2] flex flex-col justify-center p-6 animate-fade-in">
@@ -986,7 +976,6 @@ const LoginScreen = ({
     );
   }
 
-  // 4. MAP STEP
   if (authStep === 'REGISTER_MAP') {
     return (
       <div className="min-h-[100dvh] bg-[#F4F3F2] flex flex-col p-6 animate-fade-in">
@@ -1009,7 +998,6 @@ const LoginScreen = ({
     );
   }
 
-  // 5. DETAILS STEP
   if (authStep === 'REGISTER_DETAILS') {
     return (
       <div className="min-h-[100dvh] bg-[#F4F3F2] flex flex-col p-6 animate-fade-in">
@@ -1036,7 +1024,6 @@ const LoginScreen = ({
     );
   }
 
-  // 6. MAP STEP (Update)
   if (authStep === 'UPDATE_LOCATION') {
     return (
       <div className="min-h-[100dvh] bg-[#F4F3F2] flex flex-col p-6 animate-fade-in">
@@ -1059,7 +1046,6 @@ const LoginScreen = ({
     );
   }
 
-  // 7. DETAILS STEP (Update)
   if (authStep === 'UPDATE_DETAILS') {
     return (
       <div className="min-h-[100dvh] bg-[#F4F3F2] flex flex-col p-6 animate-fade-in">
@@ -1085,7 +1071,6 @@ const LoginScreen = ({
     );
   }
 
-  // 8. CHANGE PIN (OLD)
   if (authStep === 'CHANGE_PIN_OLD') {
     return (
       <div className="min-h-[100dvh] bg-[#F4F3F2] flex flex-col justify-center p-6 animate-fade-in">
@@ -1171,7 +1156,6 @@ const LoginScreen = ({
     );
   }
 
-  // 9. CHANGE PIN (NEW)
   if (authStep === 'CHANGE_PIN_NEW') {
     return (
       <div className="min-h-[100dvh] bg-[#F4F3F2] flex flex-col justify-center p-6 animate-fade-in">
@@ -1242,7 +1226,6 @@ const LoginScreen = ({
     );
   }
 
-  // 10. EDIT PROFILE (Dashboard)
   if (authStep === 'EDIT_PROFILE') {
     if (!profile)
       return (
