@@ -135,10 +135,9 @@ export default function App() {
 
   // --- INITIALIZATION: FETCH MENU & USER ---
   useEffect(() => {
-    // --- STEP 2 UPDATE: CHECK FOR SUCCESS URL ---
+    // --- CHECK FOR SUCCESS URL ---
     if (window.location.pathname === '/success') {
       setView('success');
-      // We continue to load user/menu in background so when they go back, data is ready
     }
 
     document.title = 'Morpho App';
@@ -187,7 +186,7 @@ export default function App() {
 
     loadMenu();
 
-    // B. LOAD USER (FIXED: Respects Success Page)
+    // B. LOAD USER
     const timer = setTimeout(() => {
       const savedUser = localStorage.getItem('smart_menu_user');
       const trustToken = localStorage.getItem('trust_token');
@@ -198,7 +197,7 @@ export default function App() {
           const parsedUser = JSON.parse(savedUser);
           setUser(parsedUser);
 
-          // Restore Profile Data so app is ready when they leave success screen
+          // Restore Profile Data
           setFormData((prev) => ({
             ...prev,
             name: parsedUser.name,
@@ -216,11 +215,9 @@ export default function App() {
             setView('menu');
           }
         } catch (e) {
-          // Guard: Don't redirect to login if we are processing a payment success
           if (!isSuccessPage) setView('login');
         }
       } else {
-        // Guard: Don't redirect to login if we are processing a payment success
         if (!isSuccessPage) setView('login');
       }
     }, 2000);
@@ -247,14 +244,15 @@ export default function App() {
     [favorites]
   );
 
-  // --- STATUS POLLING (CLOUD SYNC) ---
+  // --- STATUS POLLING (PARANOID CLOUD SYNC) ---
+  // Fixes "Disappearing Orders"
   useEffect(() => {
     let intervalId;
 
-    // Only poll if a user is logged in
     if (user && user.phone) {
       const syncOrders = async () => {
         try {
+          // 1. Ask Cloud for ALL active orders for this phone number
           const response = await fetch(
             `${GOOGLE_SCRIPT_URL}?action=getCustomerActiveOrders&phone=${user.phone}&_=${Date.now()}`
           );
@@ -262,14 +260,13 @@ export default function App() {
           if (response.ok) {
             const data = await response.json();
             
-            // Only proceed if we got a valid array
+            // Proceed if we got valid array (even if empty)
             if (data.orders && Array.isArray(data.orders)) {
               
               setActiveOrders((prevLocalOrders) => {
                 const serverOrders = data.orders;
-                const now = new Date();
 
-                // 1. Process orders that exist in the Server
+                // 2. Process Server Data & Merge with Local Details
                 const mergedServerOrders = serverOrders.map(serverOrder => {
                   const localMatch = prevLocalOrders.find(local => String(local.id) === String(serverOrder.id));
                   
@@ -294,33 +291,31 @@ export default function App() {
 
                   return {
                     ...serverOrder,
-                    status: finalStatus,
+                    status: finalStatus, // Use the clean status
                     // CRITICAL: Preserve local item details so the popup isn't blank
                     items: localMatch?.items || [], 
                     itemsSummary: localMatch?.itemsSummary || serverOrder.itemsSummary,
-                    // Preserve other details
                     orderMode: localMatch?.orderMode || serverOrder.orderMode || 'Delivery',
                     total: serverOrder.total || localMatch?.total
                   };
                 });
 
-                // 2. THE FIX: Preserve "Fresh" Local Orders (waiting for Cloud to sync)
-                // If a local order is < 90 seconds old and NOT in the server yet, keep it.
-                // This prevents the "disappearing order" bug while Google Sheet writes.
-                const freshLocalOrders = prevLocalOrders.filter(local => {
+                // 3. PARANOID RETENTION (The Fix):
+                // If a local order is missing from the server, KEEP IT unless it was finished.
+                // This handles the gap between "Payment Success" and "Google Sheet Update".
+                const ghostOrders = prevLocalOrders.filter(local => {
                   const isInServer = serverOrders.some(s => String(s.id) === String(local.id));
-                  if (isInServer) return false; // Already handled above
+                  if (isInServer) return false; 
 
-                  // Check age of order
-                  const orderTime = local.timestamp ? new Date(local.timestamp) : new Date();
-                  const ageInSeconds = (now - orderTime) / 1000;
-                  
-                  // Keep it if it's less than 90 seconds old (buffer for Sheet latency)
-                  return ageInSeconds < 90;
+                  // Only drop if it was terminal locally
+                  if (local.status === 'delivered' || local.status === 'cancelled') return false;
+
+                  // Otherwise, keep it (Zombie Mode)
+                  return true; 
                 });
 
-                // Combine them
-                const finalOrders = [...mergedServerOrders, ...freshLocalOrders];
+                // Combine: Server Data + Ghost Data
+                const finalOrders = [...mergedServerOrders, ...ghostOrders];
 
                 // Optimization: Only update React state if data actually changed
                 if (JSON.stringify(finalOrders) !== JSON.stringify(prevLocalOrders)) {
@@ -484,12 +479,12 @@ export default function App() {
     );
   }
 
-  // --- STEP 2 UPDATE: SUCCESS VIEW RENDER ---
+  // --- SUCCESS VIEW RENDER ---
   if (view === 'success') {
     return (
       <SuccessScreen 
         onNavigateHome={() => {
-          // Clean URL bar so if they refresh they don't trigger payment logic again
+          // Clean URL bar
           window.history.replaceState({}, document.title, "/");
           setView('menu');
         }} 
@@ -794,7 +789,7 @@ export default function App() {
         </div>
       </div>
       
-      {/* --- NEW CART COMPONENT OVERLAY --- */}
+      {/* --- CART COMPONENT --- */}
       {isCartOpen && (
         <Cart
           cartItems={cart}
