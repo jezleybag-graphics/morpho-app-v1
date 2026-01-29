@@ -72,29 +72,29 @@ const Cart = ({
   }, [userProfile]);
 
   // --- NEW HELPER: STRICT FORMATTER ---
-  // This ensures addons are ALWAYS glued to their parent drink
   const formatOrderSummary = (items) => {
     return items.map(item => {
       // 1. Base Item String
       let itemString = `${item.qty || item.quantity}x ${item.name}`;
       if (item.selectedVariant) itemString += ` [${item.selectedVariant}]`;
 
-      // 2. Process Addons (The Fix)
+      // 2. Process Addons
       if (item.selectedAddOns && item.selectedAddOns.length > 0) {
         const addonString = item.selectedAddOns.map(addon => {
-          // Check if the addon object has a quantity property
           const addonQty = addon.quantity || addon.qty || 1;
-          
-          // If quantity > 1, show "3x Shot". If 1, just show "Shot"
           return addonQty > 1 ? `${addonQty}x ${addon.name}` : addon.name;
         }).join(', ');
-
-        // Attach to parent with parentheses
         itemString += ` (+ ${addonString})`;
       }
 
+      // 3. Process N/A Action (NEW: Sends data to Admin App)
+      // Checks 'unavailableAction' which you likely set in ItemDetailsPage
+      if (item.unavailableAction) {
+        itemString += ` {If N/A: ${item.unavailableAction}}`;
+      }
+
       return itemString;
-    }).join('\n'); // Use New Line for distinct rows in Sheet
+    }).join('\n'); 
   };
 
   // --- HELPER: FINALIZE ORDER (Local UI Update) ---
