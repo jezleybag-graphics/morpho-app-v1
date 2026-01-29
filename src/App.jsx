@@ -804,6 +804,12 @@ export default function App() {
             const newCart = [...cart];
             newCart.splice(index, 1);
             setCart(newCart);
+
+            // FIX: Close the cart window immediately if empty
+            if (newCart.length === 0) {
+              setIsCartOpen(false);
+              localStorage.removeItem('smart_menu_cart');
+            }
           }}
           // UPDATED: Use "Functional Update" to prevent losing the order
           onSuccess={(newOrder) => {
