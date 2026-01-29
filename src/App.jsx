@@ -21,6 +21,8 @@ import LoginScreen from './screens/LoginScreen';
 import ItemDetailsPage from './screens/ItemDetailsPage';
 import LoadingScreen from './screens/LoadingScreen';
 import FavoritesScreen from './screens/FavoritesScreen';
+import Cart from './screens/Cart';
+import SuccessScreen from './screens/SuccessScreen'; 
 
 // --- COMPONENTS ---
 import { LocationPicker, ReadOnlyMap } from './components/Maps';
@@ -54,6 +56,9 @@ export default function App() {
   // 1. STATE DEFINITIONS
   const [user, setUser] = useState(null);
   const [view, setView] = useState('loading');
+
+  // --- NEW: CART STATE ---
+  const [isCartOpen, setIsCartOpen] = useState(false);
 
   // --- NEW: DYNAMIC MENU STATE ---
   const [menuItems, setMenuItems] = useState([]);
@@ -99,13 +104,13 @@ export default function App() {
 
   // UI State
   const [showStatusPopup, setShowStatusPopup] = useState(false);
-  const [showConfirmModal, setShowConfirmModal] = useState(false);
   const [showArrivedModal, setShowArrivedModal] = useState(false);
-  const [showMapPicker, setShowMapPicker] = useState(false);
+  
+  const [showMapPicker, setShowMapPicker] = useState(false); 
   const [showDetailsForm, setShowDetailsForm] = useState(false);
   const [selectedLocation, setSelectedLocation] = useState(null);
 
-  // Checkout Form State
+  // Checkout Form State (Needed for restoring session)
   const [tempChangeLocation, setTempChangeLocation] = useState(null);
   const [tempChangeComponents, setTempChangeComponents] = useState(null);
   const [addressModified, setAddressModified] = useState(false);
@@ -130,6 +135,12 @@ export default function App() {
 
   // --- INITIALIZATION: FETCH MENU & USER ---
   useEffect(() => {
+    // --- STEP 2 UPDATE: CHECK FOR SUCCESS URL ---
+    if (window.location.pathname === '/success') {
+      setView('success');
+      // We continue to load user/menu in background so when they go back, data is ready
+    }
+
     document.title = 'Morpho App';
     let link = document.querySelector("link[rel~='icon']");
     if (!link) {
@@ -176,15 +187,18 @@ export default function App() {
 
     loadMenu();
 
-    // B. LOAD USER
+    // B. LOAD USER (FIXED: Respects Success Page)
     const timer = setTimeout(() => {
       const savedUser = localStorage.getItem('smart_menu_user');
       const trustToken = localStorage.getItem('trust_token');
+      const isSuccessPage = window.location.pathname === '/success';
 
       if (savedUser && trustToken) {
         try {
           const parsedUser = JSON.parse(savedUser);
           setUser(parsedUser);
+
+          // Restore Profile Data so app is ready when they leave success screen
           setFormData((prev) => ({
             ...prev,
             name: parsedUser.name,
@@ -195,22 +209,19 @@ export default function App() {
             setDeliveryFee(parsedUser.deliveryFee);
             setDistanceKm(parsedUser.distanceKm);
             setMapLink(parsedUser.mapLink);
-            if (parsedUser.mapLink) {
-              const match = parsedUser.mapLink.match(/q=([-0-9.]+),([-0-9.]+)/);
-              if (match) {
-                setSelectedLocation({
-                  lat: parseFloat(match[1]),
-                  lng: parseFloat(match[2]),
-                });
-              }
-            }
           }
-          setView('menu');
+
+          // Only switch to menu if we are NOT on the success page
+          if (!isSuccessPage) {
+            setView('menu');
+          }
         } catch (e) {
-          setView('login');
+          // Guard: Don't redirect to login if we are processing a payment success
+          if (!isSuccessPage) setView('login');
         }
       } else {
-        setView('login');
+        // Guard: Don't redirect to login if we are processing a payment success
+        if (!isSuccessPage) setView('login');
       }
     }, 2000);
 
@@ -288,6 +299,7 @@ export default function App() {
   const handleLogin = (userProfile) => {
     localStorage.setItem('smart_menu_user', JSON.stringify(userProfile));
     setUser(userProfile);
+    // Restore data
     setFormData((prev) => ({
       ...prev,
       name: userProfile.name,
@@ -343,36 +355,6 @@ export default function App() {
     );
   }, [searchQuery, activeCategory, activeSubcategory, menuItems]);
 
-  const getAvailableSlots = (mode, isLater) => {
-    const now = new Date();
-    const phHour = parseInt(
-      new Intl.DateTimeFormat('en-US', {
-        timeZone: 'Asia/Manila',
-        hour: 'numeric',
-        hour12: false,
-      }).format(now)
-    );
-    const phMinute = parseInt(
-      new Intl.DateTimeFormat('en-US', {
-        timeZone: 'Asia/Manila',
-        minute: 'numeric',
-      }).format(now)
-    );
-    const currentTotalMinutes = (phHour === 24 ? 0 : phHour) * 60 + phMinute;
-    const isLate = phHour >= 22;
-
-    // Buffer: If Later is selected, skip 30 mins for all modes
-    const buffer = isLater ? 30 : 0;
-
-    return TIME_SLOTS.filter((slot) => {
-      // Allow ASAP for all modes unless 'Later' is specifically clicked
-      if (slot === 'ASAP') return !isLater;
-
-      if (isLate) return true;
-      return convertToMinutes(slot) > currentTotalMinutes + buffer;
-    });
-  };
-
   const addToCart = (
     item,
     selectedAddOns,
@@ -399,8 +381,6 @@ export default function App() {
   };
 
   const CartTotal = cart.reduce((sum, i) => sum + i.totalPrice, 0);
-  const FinalTotal =
-    CartTotal + (formData.orderMode === 'Delivery' ? deliveryFee : 0);
 
   const handleMapConfirm = (locData) => {
     if (locData.fee === -1) return alert('Location too far!');
@@ -433,51 +413,6 @@ export default function App() {
     setShowDetailsForm(false);
   };
 
-  const handleOrderModeChange = (mode) => {
-    setFormData((prev) => ({ ...prev, orderMode: mode }));
-
-    // Delivery Logic
-    if (mode === 'Delivery') {
-      if (addressModified && lastDeliveryInfo) {
-        setDeliveryFee(lastDeliveryInfo.fee);
-        setDistanceKm(lastDeliveryInfo.distance);
-        setMapLink(lastDeliveryInfo.mapLink);
-        setSelectedLocation(lastDeliveryInfo.coords);
-        const info = lastDeliveryInfo.streetInfo;
-        setStreetInfo(
-          typeof info === 'object'
-            ? `${info.road}, ${info.district}`
-            : info || ''
-        );
-      } else if (user && user.deliveryFee) {
-        setDeliveryFee(user.deliveryFee);
-        setDistanceKm(user.distanceKm);
-        setMapLink(user.mapLink);
-        if (user.mapLink) {
-          const match = user.mapLink.match(/q=([-0-9.]+),([-0-9.]+)/);
-          if (match)
-            setSelectedLocation({
-              lat: parseFloat(match[1]),
-              lng: parseFloat(match[2]),
-            });
-        }
-      }
-    } else {
-      setDeliveryFee(0);
-      setShowMapPicker(false);
-    }
-
-    // Default to 'now' (ASAP) for ALL modes
-    setTimingSelection('now');
-    setFormData((prev) => ({ ...prev, orderMode: mode, time: 'ASAP' }));
-  };
-
-  const handlePlaceOrderClick = () => {
-    if (formData.orderMode === 'Delivery' && !formData.address)
-      setShowMapPicker(true);
-    else setShowConfirmModal(true);
-  };
-
   const handleLogout = () => {
     localStorage.removeItem('trust_token');
     localStorage.removeItem('smart_menu_cart');
@@ -486,64 +421,6 @@ export default function App() {
     setCart([]);
     setActiveOrders([]);
     setView('login');
-  };
-
-  const submitOrder = async () => {
-    setShowConfirmModal(false);
-    if (!formData.name || !formData.phone || !formData.paymentMethod)
-      return alert('Please fill all details');
-    setLoading(true);
-    const uniqueOrderId = Date.now().toString();
-
-    const itemsStr = cart
-      .map((i) => {
-        const addonString = i.selectedAddOns
-          .map((a) => (a.choice ? `${a.name} [${a.choice}]` : a.name))
-          .join(', ');
-
-        return `${i.quantity}x ${i.name} ${
-          i.selectedVariant ? '[' + i.selectedVariant + ']' : ''
-        } ${addonString ? `(${addonString})` : ''}\n   > If N/A: ${
-          i.unavailableAction
-        }`;
-      })
-      .join('\n');
-
-    const finalPayload = {
-      ...formData,
-      orderId: uniqueOrderId,
-      total: FinalTotal,
-      items:
-        itemsStr +
-        (deliveryFee > 0 ? `\n\n🛵 DELIVERY FEE: ₱${deliveryFee}` : ''),
-      payment: formData.paymentMethod,
-    };
-
-    try {
-      await fetch(GOOGLE_SCRIPT_URL, {
-        method: 'POST',
-        mode: 'no-cors',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(finalPayload),
-      });
-      const newOrder = {
-        id: uniqueOrderId,
-        total: FinalTotal,
-        items: cart,
-        status: 'placed',
-        timestamp: new Date().toISOString(),
-        customerPhone: user.phone,
-      };
-      setActiveOrders((prev) => [...prev, newOrder]);
-      setCart([]);
-      setShowStatusPopup(true);
-      setView('menu');
-    } catch (error) {
-      console.error('Submission Error', error);
-      alert('Something went wrong. Please check your connection.');
-    } finally {
-      setLoading(false);
-    }
   };
 
   // 4. VIEW RENDERING
@@ -556,6 +433,19 @@ export default function App() {
         <IOSInstallPrompt />
         <LoadingScreen duration={2500} />
       </>
+    );
+  }
+
+  // --- STEP 2 UPDATE: SUCCESS VIEW RENDER ---
+  if (view === 'success') {
+    return (
+      <SuccessScreen 
+        onNavigateHome={() => {
+          // Clean URL bar so if they refresh they don't trigger payment logic again
+          window.history.replaceState({}, document.title, "/");
+          setView('menu');
+        }} 
+      />
     );
   }
 
@@ -824,7 +714,7 @@ export default function App() {
         <div className="flex gap-3 pointer-events-auto">
           {cart.length > 0 && (
             <button
-              onClick={() => setView('cart')}
+              onClick={() => setIsCartOpen(true)}
               className="flex-1 bg-[#013E37]/95 backdrop-blur-md text-[#F4F3F2] py-4 rounded-3xl font-bold shadow-2xl shadow-green-900/20 flex justify-between px-6 items-center ring-1 ring-white/10 animate-slideUp"
             >
               <div className="flex items-center gap-3">
@@ -855,341 +745,44 @@ export default function App() {
           </button>
         </div>
       </div>
-      {/* CHECKOUT DRAWER */}
-      {(view === 'cart' || view === 'checkout') && (
-        <div className="fixed inset-0 z-50 flex flex-col justify-end sm:items-center font-poppins">
-          <div
-            className="absolute inset-0 bg-black/30 backdrop-blur-sm transition-opacity"
-            onClick={() => setView('menu')}
-          />
-          <div className="relative bg-white w-full max-w-md h-[90vh] rounded-t-[2.5rem] flex flex-col shadow-2xl animate-slideUp overflow-hidden">
-            <div className="p-6 border-b border-gray-100 flex justify-between items-center bg-white sticky top-0 z-10">
-              <h2 className="font-black text-2xl text-gray-900">
-                {view === 'cart' ? 'Your Bag' : 'Checkout'}
-              </h2>
-              <button
-                onClick={() => setView('menu')}
-                className="p-2 bg-gray-50 rounded-full hover:bg-gray-100 transition-colors"
-              >
-                <ChevronDown size={24} className="text-gray-600" />
-              </button>
-            </div>
+      
+      {/* --- NEW CART COMPONENT OVERLAY --- */}
+      {isCartOpen && (
+        <Cart
+          cartItems={cart}
+          userProfile={user}
+          onClose={() => setIsCartOpen(false)}
+          onRemoveItem={(index) => {
+            const newCart = [...cart];
+            newCart.splice(index, 1);
+            setCart(newCart);
+          }}
+          // UPDATED: Use "Functional Update" to prevent losing the order
+          onSuccess={(newOrder) => {
+            console.log("Processing Successful Order:", newOrder);
 
-            <div className="flex-1 overflow-y-auto p-6 bg-white pb-[env(safe-area-inset-bottom)]">
-              {view === 'cart' ? (
-                cart.length === 0 ? (
-                  <div className="h-full flex flex-col items-center justify-center text-gray-400 pb-20">
-                    <ShoppingBag size={64} className="mb-4 opacity-20" />
-                    <p className="font-bold">Your bag is empty</p>
-                    <button
-                      onClick={() => setView('menu')}
-                      className="mt-4 text-[#013E37] font-bold text-sm"
-                    >
-                      Browse Menu
-                    </button>
-                  </div>
-                ) : (
-                  <div className="space-y-4">
-                    {cart.map((item) => (
-                      <div
-                        key={item.uniqueId}
-                        className="flex justify-between items-start border border-gray-100 p-4 rounded-2xl bg-white shadow-sm"
-                      >
-                        <div>
-                          <div className="font-bold text-gray-900 text-sm flex items-center gap-2">
-                            <span className="bg-[#013E37]/10 text-[#013E37] px-2 py-0.5 rounded text-xs">
-                              {item.quantity}x
-                            </span>
-                            {item.name}
-                          </div>
-                          {item.selectedVariant && (
-                            <div className="text-xs font-bold text-gray-500 mt-1 pl-8">
-                              • {item.selectedVariant}
-                            </div>
-                          )}
-                          <div className="text-xs text-gray-400 pl-8 mt-0.5 leading-relaxed font-opensans">
-                            {item.selectedAddOns
-                              .map((a) =>
-                                a.choice ? `${a.name} [${a.choice}]` : a.name
-                              )
-                              .join(', ')}
-                          </div>
-                        </div>
-                        <div className="flex flex-col items-end gap-2">
-                          <span className="text-sm font-bold">
-                            ₱{item.totalPrice}
-                          </span>
-                          <button
-                            onClick={() =>
-                              setCart(
-                                cart.filter((c) => c.uniqueId !== item.uniqueId)
-                              )
-                            }
-                            className="text-red-400 p-1.5 hover:bg-red-50 rounded-lg transition-colors"
-                          >
-                            <Trash2 size={16} />
-                          </button>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                )
-              ) : (
-                /* CHECKOUT VIEW */
-                <div className="space-y-6">
-                  <div className="bg-[#013E37]/5 p-6 rounded-3xl border border-[#013E37]/10 flex justify-between items-center">
-                    <span className="text-[#013E37] font-bold">
-                      Total Amount
-                    </span>
-                    <span className="text-3xl font-black text-[#013E37] tracking-tight">
-                      ₱{FinalTotal}
-                    </span>
-                  </div>
-
-                  <div className="space-y-2">
-                    <label className="text-xs font-bold text-gray-400 uppercase tracking-wider ml-1">
-                      Order Type
-                    </label>
-                    <div className="grid grid-cols-3 gap-2 p-1 bg-gray-100 rounded-xl">
-                      {['Dine In', 'Pick Up', 'Delivery'].map((m) => (
-                        <button
-                          key={m}
-                          onClick={() => handleOrderModeChange(m)}
-                          className={`py-3 text-xs font-bold rounded-lg transition-all ${
-                            formData.orderMode === m
-                              ? 'bg-white text-gray-900 shadow-sm'
-                              : 'text-gray-500 hover:text-gray-700'
-                          }`}
-                        >
-                          {m}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-
-                  <div className="space-y-2">
-                    <label className="text-xs font-bold text-gray-400 uppercase tracking-wider ml-1">
-                      {formData.orderMode === 'Dine In'
-                        ? 'Serving Time'
-                        : formData.orderMode === 'Pick Up'
-                        ? 'Pickup Time'
-                        : 'Delivery Time'}
-                    </label>
-
-                    {/* BUTTONS: Always visible now */}
-                    <div className="flex gap-3 mb-3">
-                      <button
-                        onClick={() => {
-                          setTimingSelection('now');
-                          setFormData((prev) => ({ ...prev, time: 'ASAP' }));
-                        }}
-                        className={`flex-1 py-3 px-4 text-xs font-bold rounded-xl border-2 transition-all flex items-center justify-center gap-2 ${
-                          timingSelection === 'now'
-                            ? 'bg-[#013E37]/5 border-[#013E37] text-[#013E37]'
-                            : 'bg-white text-gray-500 border-gray-100'
-                        }`}
-                      >
-                        <Zap size={14} />{' '}
-                        {formData.orderMode === 'Delivery'
-                          ? 'Deliver Now'
-                          : 'Prepare Now'}
-                      </button>
-                      <button
-                        onClick={() => {
-                          setTimingSelection('later');
-                          const slots = getAvailableSlots(
-                            formData.orderMode,
-                            true
-                          );
-                          setFormData((prev) => ({
-                            ...prev,
-                            time: slots.length > 0 ? slots[0] : 'ASAP',
-                          }));
-                        }}
-                        className={`flex-1 py-3 px-4 text-xs font-bold rounded-xl border-2 transition-all flex items-center justify-center gap-2 ${
-                          timingSelection === 'later'
-                            ? 'bg-[#013E37]/5 border-[#013E37] text-[#013E37]'
-                            : 'bg-white text-gray-500 border-gray-100'
-                        }`}
-                      >
-                        <Clock size={14} /> Later
-                      </button>
-                    </div>
-
-                    {/* DROPDOWN: Shows only when LATER is clicked */}
-                    {timingSelection === 'later' && (
-                      <div className="animate-fade-in relative">
-                        <select
-                          className="w-full p-4 border border-gray-200 rounded-2xl bg-white text-base font-bold focus:ring-2 focus:ring-[#013E37] outline-none appearance-none"
-                          value={formData.time}
-                          onChange={(e) =>
-                            setFormData({ ...formData, time: e.target.value })
-                          }
-                        >
-                          {getAvailableSlots(
-                            formData.orderMode,
-                            timingSelection === 'later'
-                          ).map((t) => (
-                            <option key={t} value={t}>
-                              {t}
-                            </option>
-                          ))}
-                        </select>
-                        <ChevronDown
-                          className="absolute right-4 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none"
-                          size={16}
-                        />
-                      </div>
-                    )}
-                  </div>
-
-                  {formData.orderMode === 'Delivery' && (
-                    <div className="space-y-4 animate-fade-in pt-2">
-                      <label className="text-xs font-bold text-gray-400 uppercase tracking-wider ml-1">
-                        Delivery Address
-                      </label>
-                      {showMapPicker ? (
-                        <div className="border rounded-2xl overflow-hidden shadow-sm h-[400px] flex flex-col">
-                          <LocationPicker onLocationSelect={handleMapConfirm} />
-                        </div>
-                      ) : (
-                        <div className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm relative group overflow-hidden">
-                          <div className="absolute left-0 top-0 bottom-0 w-1 bg-gray-200 group-hover:bg-[#013E37] transition-colors"></div>
-                          {formData.address ? (
-                            <div className="pl-2">
-                              {selectedLocation && (
-                                <div className="h-20 w-full rounded-xl overflow-hidden mb-3 border border-gray-100 relative pointer-events-none opacity-80">
-                                  <ReadOnlyMap
-                                    center={[
-                                      selectedLocation.lat,
-                                      selectedLocation.lng,
-                                    ]}
-                                  />
-                                </div>
-                              )}
-                              <div className="flex items-start gap-3">
-                                <div className="flex-1">
-                                  <p className="font-bold text-gray-900 text-sm leading-snug">
-                                    {formData.address}
-                                  </p>
-                                  <p className="text-xs text-gray-500 mt-1 font-medium bg-gray-100 inline-block px-2 py-0.5 rounded">
-                                    {distanceKm}km • Fee: ₱{deliveryFee}
-                                  </p>
-                                </div>
-                              </div>
-                              <button
-                                onClick={() => setShowMapPicker(true)}
-                                className="absolute top-3 right-3 text-xs font-bold text-[#013E37] bg-[#013E37]/10 px-3 py-1.5 rounded-lg hover:bg-[#013E37]/20 transition-colors"
-                              >
-                                Change
-                              </button>
-                            </div>
-                          ) : (
-                            <button
-                              onClick={() => setShowMapPicker(true)}
-                              className="w-full py-4 text-[#013E37] font-bold text-sm bg-[#013E37]/5 rounded-xl border border-dashed border-[#013E37]/30 hover:bg-[#013E37]/10 transition-colors flex items-center justify-center gap-2"
-                            >
-                              <MapPin size={18} /> Set Delivery Location
-                            </button>
-                          )}
-                          <input
-                            placeholder="Add Landmark (Optional)"
-                            className="w-full mt-3 p-3 border-t border-gray-100 bg-transparent text-base focus:outline-none placeholder:text-gray-400"
-                            value={formData.landmark}
-                            onChange={(e) =>
-                              setFormData({
-                                ...formData,
-                                landmark: e.target.value,
-                              })
-                            }
-                          />
-                        </div>
-                      )}
-                    </div>
-                  )}
-
-                  <div className="space-y-2">
-                    <label className="text-xs font-bold text-gray-400 uppercase tracking-wider ml-1">
-                      Payment Method
-                    </label>
-                    <div className="grid grid-cols-1 gap-3">
-                      {['Cash', 'GCash', 'Maya'].map((p) => (
-                        <label
-                          key={p}
-                          className={`flex items-center gap-4 p-4 border rounded-2xl cursor-pointer transition-all ${
-                            formData.paymentMethod === p
-                              ? 'border-[#013E37] bg-[#013E37]/5 shadow-sm'
-                              : 'border-gray-100 hover:bg-gray-50'
-                          }`}
-                        >
-                          <div
-                            className={`w-5 h-5 rounded-full border flex items-center justify-center ${
-                              formData.paymentMethod === p
-                                ? 'border-[#013E37]'
-                                : 'border-gray-300'
-                            }`}
-                          >
-                            {formData.paymentMethod === p && (
-                              <div className="w-2.5 h-2.5 rounded-full bg-[#013E37]"></div>
-                            )}
-                          </div>
-                          <input
-                            type="radio"
-                            checked={formData.paymentMethod === p}
-                            onChange={() =>
-                              setFormData({ ...formData, paymentMethod: p })
-                            }
-                            className="hidden"
-                          />
-                          <span className="font-bold text-gray-800">{p}</span>
-                        </label>
-                      ))}
-                    </div>
-                  </div>
-                </div>
-              )}
-            </div>
-
-            <div className="p-6 bg-white border-t border-gray-100 pb-[calc(1.5rem+env(safe-area-inset-bottom))]">
-              {view === 'cart' ? (
-                <button
-                  onClick={() => setView('checkout')}
-                  disabled={cart.length === 0}
-                  className="w-full bg-[#013E37] text-white py-4 rounded-2xl font-bold shadow-xl active:scale-[0.98] transition-transform flex justify-between px-6 items-center disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                  <span>Checkout</span>
-                  <span className="bg-white/20 px-3 py-1 rounded-lg text-sm">
-                    ₱{CartTotal}
-                  </span>
-                </button>
-              ) : (
-                <button
-                  onClick={submitOrder}
-                  disabled={
-                    loading ||
-                    (formData.orderMode === 'Delivery' &&
-                      (deliveryFee <= 0 || showMapPicker))
-                  }
-                  className={`w-full text-white py-4 rounded-2xl font-bold transition-all shadow-xl active:scale-[0.98] flex justify-between px-6 items-center ${
-                    loading ||
-                    (formData.orderMode === 'Delivery' &&
-                      (deliveryFee <= 0 || showMapPicker))
-                      ? 'bg-gray-300 cursor-not-allowed text-gray-500 shadow-none'
-                      : 'bg-[#013E37] shadow-[#013E37]/30'
-                  }`}
-                >
-                  <span>{loading ? 'Processing...' : 'Place Order'}</span>
-                  {!loading && (
-                    <span className="bg-white/20 px-3 py-1 rounded-lg text-sm">
-                      ₱{FinalTotal}
-                    </span>
-                  )}
-                </button>
-              )}
-            </div>
-          </div>
-        </div>
+            // 1. Safe State Update (prev => ...)
+            setActiveOrders((prevOrders) => {
+              // Create the new list based on the LATEST state
+              const updated = [...prevOrders, newOrder];
+              
+              // Save to Storage immediately using this correct list
+              localStorage.setItem('smart_menu_active_orders', JSON.stringify(updated));
+              
+              return updated;
+            });
+            
+            // 2. Clear Cart
+            setCart([]);
+            localStorage.removeItem('smart_menu_cart');
+            
+            // 3. Close Modal and Show Success View
+            setIsCartOpen(false);
+            setView('success');
+          }}
+        />
       )}
+
       {showDetailsForm && (
         <div className="fixed inset-0 z-[70] flex items-end sm:items-center justify-center bg-black/60 backdrop-blur-sm animate-fade-in font-poppins">
           <div className="bg-white w-full max-w-md p-6 rounded-t-[2rem] sm:rounded-3xl shadow-2xl animate-slideUp">
@@ -1211,6 +804,7 @@ export default function App() {
           </div>
         </div>
       )}
+
       {showPromo && <AnnouncementModal onClose={() => setShowPromo(false)} />}
       {showStatusPopup && (
         <StatusPopup
@@ -1221,12 +815,6 @@ export default function App() {
           )}
           onDismiss={handleDismissOrder}
           onClose={() => setShowStatusPopup(false)}
-        />
-      )}
-      {showConfirmModal && (
-        <ConfirmationModal
-          onConfirm={submitOrder}
-          onCancel={() => setShowConfirmModal(false)}
         />
       )}
       {showArrivedModal && (
