@@ -1,17 +1,21 @@
-name: Deploy to Firebase Hosting on merge
-'on':
-  push:
-    branches:
-      - main  # 👈 Change this to 'master' if your branch is named master
-jobs:
-  build_and_deploy:
-    runs-on: ubuntu-latest
-    steps:
+steps:
       - uses: actions/checkout@v4
-      - run: npm ci && npm run build
-      - uses: FirebaseExtended/action-hosting-deploy@v0
+      
+      - name: Install Dependencies
+        run: npm ci
+        
+      - name: Build Project
+        # The --emptyOutDir flag forces Vite to delete the old 'dist' and start fresh
+        run: npm run build -- --emptyOutDir 
+
+      - name: Verify Build Output (Safety Check)
+        # This confirms the index.html actually exists in 'dist' before deploying
+        run: ls dist && grep -i "privacy" dist/index.html
+
+      - name: Deploy to Firebase Hosting
+        uses: FirebaseExtended/action-hosting-deploy@v0
         with:
           repoToken: '${{ secrets.GITHUB_TOKEN }}'
           firebaseServiceAccount: '${{ secrets.FIREBASE_SERVICE_ACCOUNT_MORPHO_ORDER_APP_A8052 }}'
           channelId: live
-          projectId: morpho-order-app-a8052 # 👈 Double check this ID!
+          projectId: morpho-order-app-a8052
