@@ -71,15 +71,39 @@ const Cart = ({
     }
   }, [userProfile]);
 
+  // --- NEW HELPER: STRICT FORMATTER ---
+  // This ensures addons are ALWAYS glued to their parent drink
+  const formatOrderSummary = (items) => {
+    return items.map(item => {
+      // 1. Base Item String
+      let itemString = `${item.qty || item.quantity}x ${item.name}`;
+      if (item.selectedVariant) itemString += ` [${item.selectedVariant}]`;
+
+      // 2. Process Addons (The Fix)
+      if (item.selectedAddOns && item.selectedAddOns.length > 0) {
+        const addonString = item.selectedAddOns.map(addon => {
+          // Check if the addon object has a quantity property
+          const addonQty = addon.quantity || addon.qty || 1;
+          
+          // If quantity > 1, show "3x Shot". If 1, just show "Shot"
+          return addonQty > 1 ? `${addonQty}x ${addon.name}` : addon.name;
+        }).join(', ');
+
+        // Attach to parent with parentheses
+        itemString += ` (+ ${addonString})`;
+      }
+
+      return itemString;
+    }).join('\n'); // Use New Line for distinct rows in Sheet
+  };
+
   // --- HELPER: FINALIZE ORDER (Local UI Update) ---
   const finalizeOrder = (status) => {
     const finalFee = orderMode === 'Delivery' ? deliveryFee : 0;
     const subtotal = cartItems.reduce((sum, item) => sum + (Number(item.finalPrice || item.price) * Number(item.qty || item.quantity)), 0);
     
-    // Create items summary string
-    const itemsSummary = cartItems.map(item => 
-        `${item.qty || item.quantity}x ${item.name} ${item.selectedVariant ? '['+item.selectedVariant+']' : ''}`
-    ).join(', ');
+    // Create items summary string using the NEW Formatter
+    const itemsSummary = formatOrderSummary(cartItems);
 
     const newOrder = {
         id: orderIdRef.current,
@@ -112,7 +136,9 @@ const Cart = ({
     const finalFee = orderMode === 'Delivery' ? deliveryFee : 0;
     const subtotal = cartItems.reduce((sum, item) => sum + (Number(item.finalPrice || item.price) * Number(item.qty || item.quantity)), 0);
     const total = subtotal + finalFee;
-    const itemsSummary = cartItems.map(item => `${item.qty || item.quantity}x ${item.name} ${item.selectedVariant ? '['+item.selectedVariant+']' : ''}`).join(', ');
+    
+    // Create items summary string using the NEW Formatter
+    const itemsSummary = formatOrderSummary(cartItems);
 
     const payload = {
         orderId: orderIdRef.current,
@@ -226,7 +252,8 @@ const Cart = ({
     setLoading(true);
     isSaving.current = false; // Reset lock for new attempt
 
-    const itemsSummary = cartItems.map(item => `${item.qty || item.quantity}x ${item.name}`).join(', ');
+    // Create items summary string using the NEW Formatter
+    const itemsSummary = formatOrderSummary(cartItems);
     
     // Regenerate ID if needed, or use Ref
     const orderId = orderIdRef.current;
@@ -277,7 +304,7 @@ const Cart = ({
     if (isSaving.current) return;
     isSaving.current = true;
 
-    // SAVE TO SHEET IMMEDIATELY
+    // SAVE TO SHEET IMMEDIATELY (This uses the new formatter inside the function)
     await saveOrderToSheet('placed', 'Cash');
 
     setTimeout(() => {
