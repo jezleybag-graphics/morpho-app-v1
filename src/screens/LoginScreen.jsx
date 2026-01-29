@@ -145,11 +145,9 @@ const LoginScreen = ({
     try {
       const provider = new GoogleAuthProvider();
       
-      // --- UPDATE: Force account selection ---
       provider.setCustomParameters({
         prompt: 'select_account'
       });
-      // -------------------------------------
 
       const result = await signInWithPopup(auth, provider);
       const user = result.user;
@@ -498,7 +496,6 @@ const LoginScreen = ({
         <div className="absolute -top-20 -right-20 w-64 h-64 bg-[#013E37]/20 rounded-full blur-3xl opacity-30 animate-pulse" />
 
         <div className="relative z-10 text-center mb-12">
-          {/* UPDATED: Removed white container, kept animation */}
           <div className="w-40 h-40 mx-auto mb-6 animate-bounce-slow flex items-center justify-center">
             <img
               src={BRAND_INFO.logo}
@@ -538,9 +535,23 @@ const LoginScreen = ({
             </div>
           )}
         </div>
-        <p className="text-center text-xs text-gray-500 mt-12">
-          v1.0 • Developed by Morpho
-        </p>
+
+        {/* --- ADDED: Privacy Policy Link for Google Verification --- */}
+        <div className="mt-12 text-center relative z-10">
+          <p className="text-[10px] text-gray-500 font-medium uppercase tracking-widest mb-2">
+            By signing in, you agree to our{' '}
+            <a 
+              href="/privacy.html" 
+              target="_blank" 
+              className="text-amber-700 underline decoration-amber-700/30 hover:text-amber-900 transition-colors"
+            >
+              Privacy Policy
+            </a>
+          </p>
+          <p className="text-[10px] text-gray-400 font-bold">
+            v1.0 • Developed by Morpho
+          </p>
+        </div>
       </div>
     );
   }
@@ -869,7 +880,6 @@ const LoginScreen = ({
     return (
       <div className="min-h-[100dvh] bg-[#F4F3F2] flex flex-col justify-center p-6 animate-fade-in">
         <div className="text-center mb-6">
-          {/* UPDATED: Profile Picture instead of Lock Icon */}
           <div className="w-24 h-24 rounded-full mx-auto mb-6 shadow-xl border-4 border-white overflow-hidden relative">
             {foundUser.profilePic ? (
               <img
@@ -905,7 +915,6 @@ const LoginScreen = ({
           ))}
         </div>
 
-        {/* Custom NumPad */}
         <div className="flex-1 flex flex-col justify-end pb-8">
           <div className="grid grid-cols-3 gap-2 max-w-xs mx-auto w-full">
             {[1, 2, 3, 4, 5, 6, 7, 8, 9].map((n) => (
