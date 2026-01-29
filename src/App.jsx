@@ -255,7 +255,6 @@ export default function App() {
     if (user && user.phone) {
       const syncOrders = async () => {
         try {
-          // 1. Ask Cloud for ALL active orders for this phone number
           const response = await fetch(
             `${GOOGLE_SCRIPT_URL}?action=getCustomerActiveOrders&phone=${user.phone}&_=${Date.now()}`
           );
@@ -263,16 +262,18 @@ export default function App() {
           if (response.ok) {
             const data = await response.json();
             
-            if (data.orders) {
+            // Only proceed if we got a valid array
+            if (data.orders && Array.isArray(data.orders)) {
+              
               setActiveOrders((prevLocalOrders) => {
                 const serverOrders = data.orders;
-                
-                // Map server data to our local format
-                const mergedOrders = serverOrders.map(serverOrder => {
-                  const localMatch = prevLocalOrders.find(local => local.id === serverOrder.id);
+                const now = new Date();
+
+                // 1. Process orders that exist in the Server
+                const mergedServerOrders = serverOrders.map(serverOrder => {
+                  const localMatch = prevLocalOrders.find(local => String(local.id) === String(serverOrder.id));
                   
-                  // --- PRESERVED LOGIC: STATUS NORMALIZATION ---
-                  // We must clean the text from Google Sheet to match your App's CSS keys
+                  // Status Normalization (To match your CSS)
                   const rawStatus = serverOrder.status || '';
                   const normalized = rawStatus.toLowerCase().replace(/\s+/g, '');
                   let finalStatus = normalized;
@@ -285,8 +286,7 @@ export default function App() {
                   else if (normalized.includes('cancel')) finalStatus = 'cancelled'; 
                   else if (normalized.includes('decline')) finalStatus = 'cancelled';
 
-                  // --- PRESERVED LOGIC: NOTIFICATIONS ---
-                  // Only play sound if status CHANGED to 'arrived'
+                  // Notification Logic
                   if (localMatch && localMatch.status !== 'arrived' && finalStatus === 'arrived') {
                      playNotificationSound('rider');
                      setShowArrivedModal(true);
@@ -294,17 +294,37 @@ export default function App() {
 
                   return {
                     ...serverOrder,
-                    status: finalStatus, // Use the clean status
-                    // Keep detailed info (like full item list) from local memory if we have it
-                    // This ensures the receipt looks good on the device that placed the order
-                    items: localMatch?.items?.length ? localMatch.items : [], 
-                    itemsSummary: localMatch?.itemsSummary || serverOrder.itemsSummary
+                    status: finalStatus,
+                    // CRITICAL: Preserve local item details so the popup isn't blank
+                    items: localMatch?.items || [], 
+                    itemsSummary: localMatch?.itemsSummary || serverOrder.itemsSummary,
+                    // Preserve other details
+                    orderMode: localMatch?.orderMode || serverOrder.orderMode || 'Delivery',
+                    total: serverOrder.total || localMatch?.total
                   };
                 });
 
-                // Optimization: Only update React state if something actually changed
-                if (JSON.stringify(mergedOrders) !== JSON.stringify(prevLocalOrders)) {
-                    return mergedOrders;
+                // 2. THE FIX: Preserve "Fresh" Local Orders (waiting for Cloud to sync)
+                // If a local order is < 90 seconds old and NOT in the server yet, keep it.
+                // This prevents the "disappearing order" bug while Google Sheet writes.
+                const freshLocalOrders = prevLocalOrders.filter(local => {
+                  const isInServer = serverOrders.some(s => String(s.id) === String(local.id));
+                  if (isInServer) return false; // Already handled above
+
+                  // Check age of order
+                  const orderTime = local.timestamp ? new Date(local.timestamp) : new Date();
+                  const ageInSeconds = (now - orderTime) / 1000;
+                  
+                  // Keep it if it's less than 90 seconds old (buffer for Sheet latency)
+                  return ageInSeconds < 90;
+                });
+
+                // Combine them
+                const finalOrders = [...mergedServerOrders, ...freshLocalOrders];
+
+                // Optimization: Only update React state if data actually changed
+                if (JSON.stringify(finalOrders) !== JSON.stringify(prevLocalOrders)) {
+                    return finalOrders;
                 }
                 return prevLocalOrders;
               });
@@ -321,7 +341,7 @@ export default function App() {
     }
 
     return () => clearInterval(intervalId);
-  }, [user]); // Dependency is 'user', not 'activeOrders', so it works on new devices
+  }, [user]);
 
   // 3. HANDLERS
   const handleLogin = (userProfile) => {
