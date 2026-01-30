@@ -226,16 +226,16 @@ export default function App() {
   useEffect(() => localStorage.setItem('smart_menu_active_orders', JSON.stringify(activeOrders)), [activeOrders]);
   useEffect(() => localStorage.setItem('smart_menu_favorites', JSON.stringify(favorites)), [favorites]);
 
-  // --------------------------------------------------------
-  // --- STATUS POLLING (THE FIX: ORDER ID NORMALIZATION) ---
-  // --------------------------------------------------------
+  // ------------------------------------------------------------
+  // --- STATUS POLLING (FIXED: SANITIZED PHONE & ROBUST ID) ---
+  // ------------------------------------------------------------
   useEffect(() => {
     let intervalId;
 
     // Helper: Match "ORD-123" with "123" or "Order #123"
     const areIdsEqual = (id1, id2) => {
       if (!id1 || !id2) return false;
-      const s1 = String(id1).replace(/[^0-9]/g, ''); // Extract just the numbers
+      const s1 = String(id1).replace(/[^0-9]/g, ''); 
       const s2 = String(id2).replace(/[^0-9]/g, '');
       return s1 === s2 && s1.length > 0;
     };
@@ -243,8 +243,12 @@ export default function App() {
     if (user && user.phone) {
       const syncOrders = async () => {
         try {
+          // 1. FIX: Sanitize Phone (Remove spaces/dashes) before query
+          // This prevents "No orders found" if user typed "0917 123" but sheet has "0917123"
+          const cleanPhone = user.phone.replace(/[^0-9+]/g, ''); 
+          
           const response = await fetch(
-            `${GOOGLE_SCRIPT_URL}?action=getCustomerActiveOrders&phone=${user.phone}&_=${Date.now()}`
+            `${GOOGLE_SCRIPT_URL}?action=getCustomerActiveOrders&phone=${encodeURIComponent(cleanPhone)}&_=${Date.now()}`
           );
 
           if (response.ok) {
@@ -253,15 +257,14 @@ export default function App() {
             if (data.orders && Array.isArray(data.orders)) {
               
               setActiveOrders((prevLocalOrders) => {
-                // 1. FIX: Normalize Server Data to ensure 'id' property exists
-                const serverOrders = data.orders.map(o => ({
-                  ...o,
-                  id: o.id || o.orderId // Map 'orderId' from Google Sheet to 'id' for App
-                }));
+                const serverOrders = data.orders;
 
-                // 2. Process Server Data
+                // 2. Process Server Data (The Source of Truth)
                 const mergedServerOrders = serverOrders.map(serverOrder => {
-                  const localMatch = prevLocalOrders.find(local => areIdsEqual(local.id, serverOrder.id));
+                  // FIX: Handle Server ID variations (id, orderId, OrderId)
+                  const serverId = serverOrder.id || serverOrder.orderId || serverOrder.OrderId || "UNKNOWN";
+                  
+                  const localMatch = prevLocalOrders.find(local => areIdsEqual(local.id, serverId));
                   
                   // Status Normalization (Aggressive Mapping)
                   const rawStatus = (serverOrder.status || '').toLowerCase().trim();
@@ -287,14 +290,15 @@ export default function App() {
                     itemsSummary: localMatch?.itemsSummary || serverOrder.itemsSummary,
                     orderMode: localMatch?.orderMode || serverOrder.orderMode || 'Delivery',
                     total: serverOrder.total || localMatch?.total,
-                    // Ensure we keep the format the App prefers (usually "ORD-...")
-                    id: localMatch?.id || serverOrder.id
+                    // FIX: Ensure ID persists correctly
+                    id: localMatch?.id || serverId
                   };
                 });
 
                 // 3. Paranoid Retention (Buffer for lag)
+                // If server returns empty list (maybe network blip), keep local data UNLESS it's clearly finished
                 const ghostOrders = prevLocalOrders.filter(local => {
-                  const isInServer = serverOrders.some(s => areIdsEqual(s.id, local.id));
+                  const isInServer = serverOrders.some(s => areIdsEqual(s.id || s.orderId, local.id));
                   if (isInServer) return false; 
 
                   if (local.status === 'delivered' || local.status === 'cancelled') return false;
@@ -305,6 +309,7 @@ export default function App() {
                 const finalOrders = [...mergedServerOrders, ...ghostOrders];
 
                 if (JSON.stringify(finalOrders) !== JSON.stringify(prevLocalOrders)) {
+                    console.log("Updated Orders from Server:", finalOrders); // Debug Log
                     return finalOrders;
                 }
                 return prevLocalOrders;
