@@ -245,14 +245,19 @@ export default function App() {
   );
 
   // --- STATUS POLLING (PARANOID CLOUD SYNC) ---
-  // Fixes "Disappearing Orders"
   useEffect(() => {
     let intervalId;
+
+    // Helper: Normalize IDs to ensure "ORD-123" matches "123" or "Order #123"
+    const areIdsEqual = (id1, id2) => {
+      const s1 = String(id1).replace(/[^0-9]/g, ''); // Remove non-numbers
+      const s2 = String(id2).replace(/[^0-9]/g, '');
+      return s1 === s2 && s1.length > 0; // Match if numeric parts are identical
+    };
 
     if (user && user.phone) {
       const syncOrders = async () => {
         try {
-          // 1. Ask Cloud for ALL active orders for this phone number
           const response = await fetch(
             `${GOOGLE_SCRIPT_URL}?action=getCustomerActiveOrders&phone=${user.phone}&_=${Date.now()}`
           );
@@ -260,30 +265,32 @@ export default function App() {
           if (response.ok) {
             const data = await response.json();
             
-            // Proceed if we got valid array (even if empty)
             if (data.orders && Array.isArray(data.orders)) {
               
               setActiveOrders((prevLocalOrders) => {
                 const serverOrders = data.orders;
 
-                // 2. Process Server Data & Merge with Local Details
+                // 1. Process Server Data (The Truth)
                 const mergedServerOrders = serverOrders.map(serverOrder => {
-                  const localMatch = prevLocalOrders.find(local => String(local.id) === String(serverOrder.id));
+                  // FIND MATCH using looser ID comparison
+                  const localMatch = prevLocalOrders.find(local => areIdsEqual(local.id, serverOrder.id));
                   
-                  // Status Normalization (To match your CSS)
+                  // Status Normalization
                   const rawStatus = serverOrder.status || '';
                   const normalized = rawStatus.toLowerCase().replace(/\s+/g, '');
                   let finalStatus = normalized;
                   
+                  // Map specific keywords to your CSS classes
                   if (normalized.includes('place')) finalStatus = 'placed';
                   else if (normalized.includes('prepar')) finalStatus = 'preparing';
-                  else if (normalized.includes('way')) finalStatus = 'ontheway';
+                  else if (normalized.includes('way')) finalStatus = 'ontheway'; // Admin "Ready for Pickup" sends "On the Way"
+                  else if (normalized.includes('pickup')) finalStatus = 'ontheway'; // Just in case
                   else if (normalized.includes('deliver')) finalStatus = 'delivered';
                   else if (normalized.includes('arrive')) finalStatus = 'arrived';
                   else if (normalized.includes('cancel')) finalStatus = 'cancelled'; 
                   else if (normalized.includes('decline')) finalStatus = 'cancelled';
 
-                  // Notification Logic
+                  // Notification Logic (Only if status changed)
                   if (localMatch && localMatch.status !== 'arrived' && finalStatus === 'arrived') {
                      playNotificationSound('rider');
                      setShowArrivedModal(true);
@@ -291,33 +298,33 @@ export default function App() {
 
                   return {
                     ...serverOrder,
-                    status: finalStatus, // Use the clean status
-                    // CRITICAL: Preserve local item details so the popup isn't blank
-                    items: localMatch?.items || [], 
+                    status: finalStatus,
+                    // IMPORTANT: Prefer local items data (it has options/addons), fallback to server summary
+                    items: localMatch?.items && localMatch.items.length > 0 ? localMatch.items : [], 
                     itemsSummary: localMatch?.itemsSummary || serverOrder.itemsSummary,
                     orderMode: localMatch?.orderMode || serverOrder.orderMode || 'Delivery',
                     total: serverOrder.total || localMatch?.total
                   };
                 });
 
-                // 3. PARANOID RETENTION (The Fix):
-                // If a local order is missing from the server, KEEP IT unless it was finished.
-                // This handles the gap between "Payment Success" and "Google Sheet Update".
+                // 2. PARANOID RETENTION:
+                // Keep local orders if they aren't in the server list yet (lag buffer).
                 const ghostOrders = prevLocalOrders.filter(local => {
-                  const isInServer = serverOrders.some(s => String(s.id) === String(local.id));
-                  if (isInServer) return false; 
+                  // Use the same loose comparison
+                  const isInServer = serverOrders.some(s => areIdsEqual(s.id, local.id));
+                  
+                  if (isInServer) return false; // It's in the server, so we used the updated version above
 
-                  // Only drop if it was terminal locally
+                  // If it's not in server, DROP IT ONLY IF it was already finished locally
+                  // This prevents "Delivered" orders from sticking around forever if the sheet archives them.
                   if (local.status === 'delivered' || local.status === 'cancelled') return false;
 
-                  // Otherwise, keep it (Zombie Mode)
+                  // Otherwise, keep it (it might be a fresh order waiting to sync)
                   return true; 
                 });
 
-                // Combine: Server Data + Ghost Data
                 const finalOrders = [...mergedServerOrders, ...ghostOrders];
 
-                // Optimization: Only update React state if data actually changed
                 if (JSON.stringify(finalOrders) !== JSON.stringify(prevLocalOrders)) {
                     return finalOrders;
                 }
@@ -329,6 +336,13 @@ export default function App() {
           console.error('Sync error', e);
         }
       };
+
+      syncOrders();
+      intervalId = setInterval(syncOrders, 5000);
+    }
+
+    return () => clearInterval(intervalId);
+  }, [user]);
 
       // Run immediately on load, then every 5 seconds
       syncOrders();
