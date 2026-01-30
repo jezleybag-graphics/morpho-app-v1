@@ -244,15 +244,16 @@ export default function App() {
     [favorites]
   );
 
-  // --- STATUS POLLING (PARANOID CLOUD SYNC) ---
+  // --- STATUS POLLING (AGGRESSIVE SYNC) ---
   useEffect(() => {
     let intervalId;
 
-    // Helper: Normalize IDs to ensure "ORD-123" matches "123" or "Order #123"
+    // Helper: Matches "ORD-123" with "123", "Order #123", or exact matches
     const areIdsEqual = (id1, id2) => {
-      const s1 = String(id1).replace(/[^0-9]/g, ''); // Remove non-numbers
+      if (!id1 || !id2) return false;
+      const s1 = String(id1).replace(/[^0-9]/g, ''); // Strip to just numbers (145135)
       const s2 = String(id2).replace(/[^0-9]/g, '');
-      return s1 === s2 && s1.length > 0; // Match if numeric parts are identical
+      return s1 === s2 && s1.length > 0;
     };
 
     if (user && user.phone) {
@@ -270,27 +271,23 @@ export default function App() {
               setActiveOrders((prevLocalOrders) => {
                 const serverOrders = data.orders;
 
-                // 1. Process Server Data (The Truth)
+                // 1. Process Server Data (The Source of Truth)
                 const mergedServerOrders = serverOrders.map(serverOrder => {
-                  // FIND MATCH using looser ID comparison
                   const localMatch = prevLocalOrders.find(local => areIdsEqual(local.id, serverOrder.id));
                   
-                  // Status Normalization
-                  const rawStatus = serverOrder.status || '';
-                  const normalized = rawStatus.toLowerCase().replace(/\s+/g, '');
-                  let finalStatus = normalized;
-                  
-                  // Map specific keywords to your CSS classes
-                  if (normalized.includes('place')) finalStatus = 'placed';
-                  else if (normalized.includes('prepar')) finalStatus = 'preparing';
-                  else if (normalized.includes('way')) finalStatus = 'ontheway'; // Admin "Ready for Pickup" sends "On the Way"
-                  else if (normalized.includes('pickup')) finalStatus = 'ontheway'; // Just in case
-                  else if (normalized.includes('deliver')) finalStatus = 'delivered';
-                  else if (normalized.includes('arrive')) finalStatus = 'arrived';
-                  else if (normalized.includes('cancel')) finalStatus = 'cancelled'; 
-                  else if (normalized.includes('decline')) finalStatus = 'cancelled';
+                  // --- AGGRESSIVE STATUS NORMALIZATION ---
+                  // This ensures "Ready for Pickup", "On the Way", "Driver Out" all map correctly
+                  const rawStatus = (serverOrder.status || '').toLowerCase().trim();
+                  let finalStatus = rawStatus.replace(/\s+/g, ''); // default fallback
 
-                  // Notification Logic (Only if status changed)
+                  if (rawStatus.includes('place') || rawStatus.includes('pend')) finalStatus = 'placed';
+                  else if (rawStatus.includes('prepar') || rawStatus.includes('cook') || rawStatus.includes('kitchen')) finalStatus = 'preparing';
+                  else if (rawStatus.includes('way') || rawStatus.includes('pickup') || rawStatus.includes('road')) finalStatus = 'ontheway';
+                  else if (rawStatus.includes('arrive') || rawStatus.includes('here')) finalStatus = 'arrived';
+                  else if (rawStatus.includes('deliver') || rawStatus.includes('complete') || rawStatus.includes('done')) finalStatus = 'delivered';
+                  else if (rawStatus.includes('cancel') || rawStatus.includes('decline') || rawStatus.includes('void')) finalStatus = 'cancelled';
+
+                  // Notification Logic
                   if (localMatch && localMatch.status !== 'arrived' && finalStatus === 'arrived') {
                      playNotificationSound('rider');
                      setShowArrivedModal(true);
@@ -299,27 +296,25 @@ export default function App() {
                   return {
                     ...serverOrder,
                     status: finalStatus,
-                    // IMPORTANT: Prefer local items data (it has options/addons), fallback to server summary
+                    // Prefer local items data if available (contains addons/variants details)
                     items: localMatch?.items && localMatch.items.length > 0 ? localMatch.items : [], 
                     itemsSummary: localMatch?.itemsSummary || serverOrder.itemsSummary,
                     orderMode: localMatch?.orderMode || serverOrder.orderMode || 'Delivery',
-                    total: serverOrder.total || localMatch?.total
+                    total: serverOrder.total || localMatch?.total,
+                    // Keep the ID format the App knows
+                    id: localMatch?.id || serverOrder.id
                   };
                 });
 
                 // 2. PARANOID RETENTION:
-                // Keep local orders if they aren't in the server list yet (lag buffer).
+                // Keep local orders active if Server hasn't indexed them yet (Lag Buffer)
                 const ghostOrders = prevLocalOrders.filter(local => {
-                  // Use the same loose comparison
                   const isInServer = serverOrders.some(s => areIdsEqual(s.id, local.id));
-                  
-                  if (isInServer) return false; // It's in the server, so we used the updated version above
+                  if (isInServer) return false; 
 
-                  // If it's not in server, DROP IT ONLY IF it was already finished locally
-                  // This prevents "Delivered" orders from sticking around forever if the sheet archives them.
+                  // If local status is already done, and server doesn't have it, drop it.
                   if (local.status === 'delivered' || local.status === 'cancelled') return false;
 
-                  // Otherwise, keep it (it might be a fresh order waiting to sync)
                   return true; 
                 });
 
