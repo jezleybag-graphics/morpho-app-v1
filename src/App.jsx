@@ -57,10 +57,10 @@ export default function App() {
   const [user, setUser] = useState(null);
   const [view, setView] = useState('loading');
 
-  // --- NEW: CART STATE ---
+  // --- CART STATE ---
   const [isCartOpen, setIsCartOpen] = useState(false);
 
-  // --- NEW: DYNAMIC MENU STATE ---
+  // --- MENU STATE ---
   const [menuItems, setMenuItems] = useState([]);
   const [isMenuLoaded, setIsMenuLoaded] = useState(false);
 
@@ -110,7 +110,7 @@ export default function App() {
   const [showDetailsForm, setShowDetailsForm] = useState(false);
   const [selectedLocation, setSelectedLocation] = useState(null);
 
-  // Checkout Form State (Needed for restoring session)
+  // Checkout Form State
   const [tempChangeLocation, setTempChangeLocation] = useState(null);
   const [tempChangeComponents, setTempChangeComponents] = useState(null);
   const [addressModified, setAddressModified] = useState(false);
@@ -133,9 +133,8 @@ export default function App() {
 
   // 2. EFFECTS
 
-  // --- INITIALIZATION: FETCH MENU & USER ---
+  // --- INITIALIZATION ---
   useEffect(() => {
-    // --- CHECK FOR SUCCESS URL ---
     if (window.location.pathname === '/success') {
       setView('success');
     }
@@ -150,12 +149,11 @@ export default function App() {
     link.href = BRAND_INFO.logo;
 
     const fontLink = document.createElement('link');
-    fontLink.href =
-      'https://fonts.googleapis.com/css2?family=Open+Sans:wght@400;600&family=Poppins:wght@400;700;900&display=swap';
+    fontLink.href = 'https://fonts.googleapis.com/css2?family=Open+Sans:wght@400;600&family=Poppins:wght@400;700;900&display=swap';
     fontLink.rel = 'stylesheet';
     document.head.appendChild(fontLink);
 
-    // --- FETCH MENU FROM FIREBASE ---
+    // --- FETCH MENU ---
     const loadMenu = async () => {
       try {
         const querySnapshot = await getDocs(collection(db, 'menu'));
@@ -186,7 +184,7 @@ export default function App() {
 
     loadMenu();
 
-    // B. LOAD USER
+    // LOAD USER
     const timer = setTimeout(() => {
       const savedUser = localStorage.getItem('smart_menu_user');
       const trustToken = localStorage.getItem('trust_token');
@@ -197,7 +195,6 @@ export default function App() {
           const parsedUser = JSON.parse(savedUser);
           setUser(parsedUser);
 
-          // Restore Profile Data
           setFormData((prev) => ({
             ...prev,
             name: parsedUser.name,
@@ -210,7 +207,6 @@ export default function App() {
             setMapLink(parsedUser.mapLink);
           }
 
-          // Only switch to menu if we are NOT on the success page
           if (!isSuccessPage) {
             setView('menu');
           }
@@ -226,32 +222,20 @@ export default function App() {
   }, []);
 
   // --- LOCAL STORAGE SYNC ---
-  useEffect(
-    () => localStorage.setItem('smart_menu_cart', JSON.stringify(cart)),
-    [cart]
-  );
-  useEffect(
-    () =>
-      localStorage.setItem(
-        'smart_menu_active_orders',
-        JSON.stringify(activeOrders)
-      ),
-    [activeOrders]
-  );
-  useEffect(
-    () =>
-      localStorage.setItem('smart_menu_favorites', JSON.stringify(favorites)),
-    [favorites]
-  );
+  useEffect(() => localStorage.setItem('smart_menu_cart', JSON.stringify(cart)), [cart]);
+  useEffect(() => localStorage.setItem('smart_menu_active_orders', JSON.stringify(activeOrders)), [activeOrders]);
+  useEffect(() => localStorage.setItem('smart_menu_favorites', JSON.stringify(favorites)), [favorites]);
 
-  // --- STATUS POLLING (AGGRESSIVE SYNC) ---
+  // --------------------------------------------------------
+  // --- STATUS POLLING (THE FIX: ORDER ID NORMALIZATION) ---
+  // --------------------------------------------------------
   useEffect(() => {
     let intervalId;
 
-    // Helper: Matches "ORD-123" with "123", "Order #123", or exact matches
+    // Helper: Match "ORD-123" with "123" or "Order #123"
     const areIdsEqual = (id1, id2) => {
       if (!id1 || !id2) return false;
-      const s1 = String(id1).replace(/[^0-9]/g, ''); // Strip to just numbers (145135)
+      const s1 = String(id1).replace(/[^0-9]/g, ''); // Extract just the numbers
       const s2 = String(id2).replace(/[^0-9]/g, '');
       return s1 === s2 && s1.length > 0;
     };
@@ -269,17 +253,20 @@ export default function App() {
             if (data.orders && Array.isArray(data.orders)) {
               
               setActiveOrders((prevLocalOrders) => {
-                const serverOrders = data.orders;
+                // 1. FIX: Normalize Server Data to ensure 'id' property exists
+                const serverOrders = data.orders.map(o => ({
+                  ...o,
+                  id: o.id || o.orderId // Map 'orderId' from Google Sheet to 'id' for App
+                }));
 
-                // 1. Process Server Data (The Source of Truth)
+                // 2. Process Server Data
                 const mergedServerOrders = serverOrders.map(serverOrder => {
                   const localMatch = prevLocalOrders.find(local => areIdsEqual(local.id, serverOrder.id));
                   
-                  // --- AGGRESSIVE STATUS NORMALIZATION ---
-                  // This ensures "Ready for Pickup", "On the Way", "Driver Out" all map correctly
+                  // Status Normalization (Aggressive Mapping)
                   const rawStatus = (serverOrder.status || '').toLowerCase().trim();
-                  let finalStatus = rawStatus.replace(/\s+/g, ''); // default fallback
-
+                  let finalStatus = rawStatus.replace(/\s+/g, '');
+                  
                   if (rawStatus.includes('place') || rawStatus.includes('pend')) finalStatus = 'placed';
                   else if (rawStatus.includes('prepar') || rawStatus.includes('cook') || rawStatus.includes('kitchen')) finalStatus = 'preparing';
                   else if (rawStatus.includes('way') || rawStatus.includes('pickup') || rawStatus.includes('road')) finalStatus = 'ontheway';
@@ -296,23 +283,20 @@ export default function App() {
                   return {
                     ...serverOrder,
                     status: finalStatus,
-                    // Prefer local items data if available (contains addons/variants details)
                     items: localMatch?.items && localMatch.items.length > 0 ? localMatch.items : [], 
                     itemsSummary: localMatch?.itemsSummary || serverOrder.itemsSummary,
                     orderMode: localMatch?.orderMode || serverOrder.orderMode || 'Delivery',
                     total: serverOrder.total || localMatch?.total,
-                    // Keep the ID format the App knows
+                    // Ensure we keep the format the App prefers (usually "ORD-...")
                     id: localMatch?.id || serverOrder.id
                   };
                 });
 
-                // 2. PARANOID RETENTION:
-                // Keep local orders active if Server hasn't indexed them yet (Lag Buffer)
+                // 3. Paranoid Retention (Buffer for lag)
                 const ghostOrders = prevLocalOrders.filter(local => {
                   const isInServer = serverOrders.some(s => areIdsEqual(s.id, local.id));
                   if (isInServer) return false; 
 
-                  // If local status is already done, and server doesn't have it, drop it.
                   if (local.status === 'delivered' || local.status === 'cancelled') return false;
 
                   return true; 
@@ -343,7 +327,6 @@ export default function App() {
   const handleLogin = (userProfile) => {
     localStorage.setItem('smart_menu_user', JSON.stringify(userProfile));
     setUser(userProfile);
-    // Restore data
     setFormData((prev) => ({
       ...prev,
       name: userProfile.name,
@@ -480,12 +463,10 @@ export default function App() {
     );
   }
 
-  // --- SUCCESS VIEW RENDER ---
   if (view === 'success') {
     return (
       <SuccessScreen 
         onNavigateHome={() => {
-          // Clean URL bar
           window.history.replaceState({}, document.title, "/");
           setView('menu');
         }} 
@@ -553,7 +534,6 @@ export default function App() {
       </>
     );
 
-  // MAIN MENU RENDER
   return (
     <div className="min-h-[100dvh] bg-gray-50 pb-32 font-opensans text-gray-900 relative">
       <style>{`.font-poppins { font-family: 'Poppins', sans-serif; } .font-opensans { font-family: 'Open Sans', sans-serif; }`}</style>
