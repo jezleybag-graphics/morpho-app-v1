@@ -344,14 +344,6 @@ export default function App() {
     return () => clearInterval(intervalId);
   }, [user]);
 
-      // Run immediately on load, then every 5 seconds
-      syncOrders();
-      intervalId = setInterval(syncOrders, 5000);
-    }
-
-    return () => clearInterval(intervalId);
-  }, [user]);
-
   // 3. HANDLERS
   const handleLogin = (userProfile) => {
     localStorage.setItem('smart_menu_user', JSON.stringify(userProfile));
