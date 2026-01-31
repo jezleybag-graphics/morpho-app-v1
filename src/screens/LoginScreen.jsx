@@ -1,5 +1,13 @@
 import React, { useState, useEffect } from 'react';
-import { GoogleAuthProvider, signInWithPopup, signOut } from 'firebase/auth';
+// 1. UPDATE IMPORTS: Added Email/Password functions and sendEmailVerification
+import { 
+  GoogleAuthProvider, 
+  signInWithPopup, 
+  signOut, 
+  createUserWithEmailAndPassword, 
+  signInWithEmailAndPassword,
+  sendEmailVerification 
+} from 'firebase/auth';
 import {
   doc,
   getDoc,
@@ -25,6 +33,9 @@ import {
   Lock as LockIcon,
   ChevronUp,
   ChevronDown,
+  Mail, // New Icon
+  Eye, // New Icon
+  EyeOff // New Icon
 } from 'lucide-react';
 
 // LOCAL IMPORTS
@@ -34,6 +45,7 @@ import { LocationPicker } from '../components/Maps';
 import { AddressDetailsForm } from '../components/Modals';
 import { formatDate } from '../utils';
 
+// ... (Keep GoogleIcon Component as is) ...
 const GoogleIcon = () => (
   <svg className="w-5 h-5 mr-2" viewBox="0 0 24 24">
     <path
@@ -79,10 +91,15 @@ const LoginScreen = ({
   const [regProfilePic, setRegProfilePic] = useState(null);
   const [regEmail, setRegEmail] = useState('');
 
+  // 2. NEW STATE: For Email/Password Signup
+  const [emailInput, setEmailInput] = useState('');
+  const [passwordInput, setPasswordInput] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
+
   // Forgot PIN state
   const [resetAnswer, setResetAnswer] = useState('');
 
-  // Temp Location Data for multi-step Reg
+  // Temp Location Data
   const [tempLocation, setTempLocation] = useState(null);
   const [tempAddressComponents, setTempAddressComponents] = useState(null);
 
@@ -136,6 +153,76 @@ const LoginScreen = ({
     return null;
   };
 
+  // --- NEW: HANDLE EMAIL SIGNUP ---
+  const handleEmailSignUp = async () => {
+    if (!emailInput || !passwordInput) {
+      setError("Please enter both email and password.");
+      return;
+    }
+    if (passwordInput.length < 6) {
+      setError("Password must be at least 6 characters.");
+      return;
+    }
+
+    setLoading(true);
+    setError('');
+
+    try {
+      // 1. Create Auth User
+      const userCredential = await createUserWithEmailAndPassword(auth, emailInput, passwordInput);
+      const user = userCredential.user;
+
+      // 2. Send Verification Email (Optional but recommended)
+      await sendEmailVerification(user);
+      alert("Account created! A verification email has been sent to your inbox.");
+
+      // 3. Move to Profile Completion (Uses your existing flow)
+      setRegEmail(user.email);
+      setAuthStep('REGISTER_FORM'); // Reuse your existing robust registration
+    } catch (err) {
+      console.error(err);
+      if (err.code === 'auth/email-already-in-use') {
+        setError("This email is already registered. Try logging in.");
+      } else if (err.code === 'auth/invalid-email') {
+        setError("Invalid email address.");
+      } else {
+        setError("Signup failed. Please try again.");
+      }
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // --- NEW: HANDLE EMAIL LOGIN (Optional, but good for completeness) ---
+  const handleEmailLogin = async () => {
+    if (!emailInput || !passwordInput) return setError("Missing email or password");
+    setLoading(true);
+    setError('');
+    
+    try {
+      const userCredential = await signInWithEmailAndPassword(auth, emailInput, passwordInput);
+      const user = userCredential.user;
+
+      // Check if they have a profile in Firestore
+      const q = query(collection(db, 'users'), where('email', '==', user.email));
+      const querySnapshot = await getDocs(q);
+
+      if (!querySnapshot.empty) {
+        const userData = querySnapshot.docs[0].data();
+        generateTrustToken(userData);
+      } else {
+        // Logged in but no profile data? Send to completion
+        setRegEmail(user.email);
+        setAuthStep('REGISTER_FORM');
+      }
+    } catch (err) {
+      console.error(err);
+      setError("Invalid email or password.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const handleGoogleLogin = async () => {
     setLoading(true);
     setError('');
@@ -161,13 +248,12 @@ const LoginScreen = ({
         setRegProfilePic(user.photoURL);
         setAuthStep('REGISTER_FORM');
       }
-      // Successful login path doesn't need setLoading(false) here because component unmounts
     } catch (err) {
       console.error('Google Auth Error:', err);
-      setLoading(false); // Fix: Reset loading immediately on ANY error
+      setLoading(false);
       
       if (err.code === 'auth/popup-closed-by-user' || err.code === 'auth/cancelled-popup-request') {
-        return; // Silent return for user cancellation
+        return;
       }
 
       if (err.code === 'auth/unauthorized-domain') {
@@ -180,6 +266,7 @@ const LoginScreen = ({
     }
   };
 
+  // ... (Keep existing checkDatabaseForUser, handleVerifyPin, etc.) ...
   const checkDatabaseForUser = async (phoneInput) => {
     setLoading(true);
     setError('');
@@ -486,12 +573,14 @@ const LoginScreen = ({
 
   if (authStep === 'WELCOME') {
     return (
-      <div className="min-h-[100dvh] bg-[#F4F3F2] flex flex-col justify-center p-8 animate-fade-in relative overflow-hidden">
+      <div className="min-h-[100dvh] bg-[#F4F3F2] flex flex-col p-6 relative overflow-hidden">
+        {/* Background decorations */}
         <div className="absolute top-0 left-0 w-full h-1/2 bg-gradient-to-b from-[#013E37]/10 to-transparent pointer-events-none" />
         <div className="absolute -top-20 -right-20 w-64 h-64 bg-[#013E37]/20 rounded-full blur-3xl opacity-30 animate-pulse" />
 
-        <div className="relative z-10 text-center mb-12">
-          <div className="w-40 h-40 mx-auto mb-6 animate-bounce-slow flex items-center justify-center">
+        {/* 1. TOP SECTION (LOGO) */}
+        <div className="flex-1 flex flex-col justify-center items-center relative z-10">
+          <div className="w-36 h-36 mx-auto mb-4 animate-bounce-slow flex items-center justify-center">
             <img
               src={BRAND_INFO.logo}
               alt="Brand Logo"
@@ -507,7 +596,18 @@ const LoginScreen = ({
           </p>
         </div>
 
-        <div className="space-y-4 max-w-sm mx-auto w-full relative z-10">
+        {/* 2. BOTTOM SECTION (BUTTONS) */}
+        <div className="w-full max-w-sm mx-auto relative z-10 flex flex-col gap-3 pb-4">
+          
+          {/* BUTTON 1: CREATE ACCOUNT (Green) */}
+          <button
+            onClick={() => { setAuthStep('EMAIL_SIGNUP'); setError(''); }}
+            className="w-full bg-[#013E37] text-[#F4F3F2] py-4 rounded-2xl font-bold shadow-xl shadow-[#013E37]/20 flex justify-center items-center gap-2 transition-all active:scale-[0.98]"
+          >
+            <Mail size={18} /> Create an Account
+          </button>
+
+          {/* BUTTON 2: GOOGLE (White) */}
           <button
             onClick={handleGoogleLogin}
             disabled={loading}
@@ -516,41 +616,117 @@ const LoginScreen = ({
             {loading ? <Loader2 className="animate-spin" /> : <GoogleIcon />}
             Sign in with Google
           </button>
+          
+          {/* BUTTON 3: PHONE LOGIN (Gold - Updated) */}
           <button
             onClick={() => setAuthStep('PHONE_ENTRY')}
-            className="w-full bg-[#013E37] text-[#F4F3F2] py-4 rounded-2xl font-bold shadow-xl shadow-[#013E37]/20 flex justify-center items-center gap-3 active:scale-[0.98] transition-transform"
+            className="w-full bg-[#C8A165] text-white py-4 rounded-2xl font-bold shadow-xl shadow-[#C8A165]/20 flex justify-center items-center gap-2 transition-all active:scale-[0.98]"
           >
             <User size={20} /> Login with Phone & PIN
           </button>
 
           {error && (
-            <div className="p-4 bg-red-50 text-red-600 rounded-2xl text-sm text-center flex items-center justify-center gap-2 mt-6 animate-shake">
-              <AlertCircle size={16} />
+            <div className="p-3 bg-red-50 text-red-600 rounded-xl text-xs text-center flex items-center justify-center gap-2 animate-shake">
+              <AlertCircle size={14} />
               {error}
             </div>
           )}
-        </div>
 
-        {/* --- Privacy Policy Link for Google Verification --- */}
-        <div className="mt-12 text-center relative z-10">
-          <p className="text-[10px] text-gray-500 font-medium uppercase tracking-widest mb-2">
-            By signing in, you agree to our{' '}
-            <a 
-              href="/privacy.html" 
-              target="_blank" 
-              className="text-amber-700 underline decoration-amber-700/30 hover:text-amber-900 transition-colors"
-            >
-              Privacy Policy
-            </a>
-          </p>
-          <p className="text-[10px] text-gray-400 font-bold">
-            v1.0 • Developed by Morpho
-          </p>
+          {/* Compact Terms/Privacy */}
+          <div className="text-center mt-2">
+            <p className="text-[10px] text-gray-400 font-medium leading-tight">
+              By signing in, you agree to our <br/>
+              <a href="/terms.html" target="_blank" className="font-bold text-[#013E37] hover:underline">Terms of Service</a> & <a href="/privacy.html" target="_blank" className="font-bold text-[#013E37] hover:underline">Privacy Policy</a>
+            </p>
+            <p className="text-[9px] text-gray-300 font-Medium mt-2 uppercase tracking-widest">
+              Beta version • Built and Designed by Morpho
+            </p>
+          </div>
         </div>
       </div>
     );
   }
 
+  // --- NEW SCREEN: EMAIL SIGNUP / LOGIN ---
+  if (authStep === 'EMAIL_SIGNUP') {
+    return (
+      <div className="min-h-[100dvh] bg-[#F4F3F2] flex flex-col justify-center p-8 animate-fade-in">
+        <div className="text-center mb-8">
+          <button
+            onClick={() => { setAuthStep('WELCOME'); setError(''); setEmailInput(''); setPasswordInput(''); }}
+            className="absolute top-8 left-8 p-2 rounded-full bg-white hover:bg-gray-100 text-gray-600 transition-colors"
+          >
+            <ArrowLeft size={20} />
+          </button>
+          <div className="w-16 h-16 bg-[#013E37]/10 rounded-2xl flex items-center justify-center mx-auto mb-4 text-[#013E37]">
+            <Mail size={28} />
+          </div>
+          <h2 className="text-2xl font-bold text-gray-900">Create Account</h2>
+          <p className="text-gray-500 text-sm">Sign up with your email</p>
+        </div>
+
+        <div className="space-y-4 max-w-sm mx-auto w-full">
+          <div>
+            <label className="text-xs font-bold text-gray-400 uppercase tracking-wider ml-2">Email Address</label>
+            <input 
+              type="email" 
+              value={emailInput}
+              onChange={(e) => setEmailInput(e.target.value)}
+              className="w-full p-4 border border-gray-200 rounded-2xl bg-white font-bold text-gray-800 outline-none focus:border-[#013E37] transition-colors"
+              placeholder="hello@example.com"
+            />
+          </div>
+
+          <div>
+            <label className="text-xs font-bold text-gray-400 uppercase tracking-wider ml-2">Password</label>
+            <div className="relative">
+              <input 
+                type={showPassword ? "text" : "password"}
+                value={passwordInput}
+                onChange={(e) => setPasswordInput(e.target.value)}
+                className="w-full p-4 border border-gray-200 rounded-2xl bg-white font-bold text-gray-800 outline-none focus:border-[#013E37] transition-colors pr-12"
+                placeholder="At least 6 characters"
+              />
+              <button 
+                onClick={() => setShowPassword(!showPassword)}
+                className="absolute right-4 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
+              >
+                {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
+              </button>
+            </div>
+          </div>
+
+          <button
+            onClick={handleEmailSignUp}
+            disabled={loading}
+            className="w-full bg-[#013E37] text-[#F4F3F2] py-4 rounded-2xl font-bold shadow-xl shadow-[#013E37]/20 flex justify-center items-center gap-2 active:scale-[0.98] transition-transform mt-4"
+          >
+            {loading ? <Loader2 className="animate-spin" /> : 'Create Account'}
+          </button>
+
+          {/* TOGGLE TO LOGIN MODE */}
+          <div className="text-center pt-4 border-t border-gray-200 mt-4">
+            <p className="text-xs text-gray-500">Already have an account?</p>
+            <button 
+              onClick={handleEmailLogin}
+              disabled={loading}
+              className="mt-2 text-[#013E37] font-bold text-sm hover:underline"
+            >
+              Log In instead
+            </button>
+          </div>
+
+          {error && (
+            <p className="text-red-500 text-center text-sm bg-red-50 p-3 rounded-xl">
+              {error}
+            </p>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  // ... (Keep the rest of your views: PHONE_ENTRY, REGISTER_FORM, etc. exactly as they are) ...
   if (authStep === 'PHONE_ENTRY') {
     return (
       <div className="min-h-[100dvh] bg-[#F4F3F2] flex flex-col justify-center p-8 animate-fade-in">
@@ -602,6 +778,10 @@ const LoginScreen = ({
     );
   }
 
+  // ... (Keep FORGOT_PIN, RESET_PIN, REGISTER_FORM, REGISTER_MAP, REGISTER_DETAILS, UPDATE_LOCATION, UPDATE_DETAILS, CHANGE_PIN_OLD, CHANGE_PIN_NEW, EDIT_PROFILE as they were) ...
+  // [I am omitting them here for brevity since you already have them, but DO NOT delete them from your file]
+  
+  // (Paste the rest of your file content here starting from if (authStep === 'FORGOT_PIN') ...)
   if (authStep === 'FORGOT_PIN') {
     return (
       <div className="min-h-[100dvh] bg-[#F4F3F2] flex flex-col justify-center p-8 animate-fade-in">

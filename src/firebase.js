@@ -7,7 +7,7 @@ import { getFirestore } from 'firebase/firestore';
 // ==========================================
 // We are hardcoding these temporarily to fix the "Invalid API Key" error.
 const firebaseConfig = {
-  apiKey: 'AIzaSyCvZWA51Q-aIaToT90ggTiEITpMem92xMo',
+  apiKey: 'AIzaSyCULQUSp-dlMJgRQytkmnNnBAqJ5DV1niA',
   authDomain: 'morpho-order-app-a8052.firebaseapp.com',
   projectId: 'morpho-order-app-a8052',
   storageBucket: 'morpho-order-app-a8052.firebasestorage.app',
@@ -36,8 +36,5 @@ export const db = getFirestore(app);
 export const GOOGLE_SCRIPT_URL =
   'https://script.google.com/macros/s/AKfycbzr_DVTJ-jeqU9uGRPEXdfXuxnru1Zgig4ngWD5WWLojSTGwCG-zPPi0oUA13ToHEzv/exec';
 
-// Payment & UI Constants
-export const MAGPIE_PUBLIC_KEY =
-  import.meta.env.VITE_MAGPIE_PUBLIC_KEY || 'pk_test_...'; // Fallback if env missing
 export const NOTIFICATION_SOUND_URL =
   'https://assets.mixkit.co/sfx/preview/mixkit-positive-notification-951.mp3';
