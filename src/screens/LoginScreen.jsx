@@ -638,7 +638,7 @@ const LoginScreen = ({
               By signing in, you agree to our <br/>
               <a href="/terms.html" target="_blank" className="font-bold text-[#013E37] hover:underline">Terms of Service</a> & <a href="/privacy.html" target="_blank" className="font-bold text-[#013E37] hover:underline">Privacy Policy</a>
             </p>
-            <p className="text-[9px] text-gray-300 font-Medium mt-2 uppercase tracking-widest">
+            <p className="text-[9px] text-gray-500 font-Medium mt-2 uppercase tracking-widest">
               Beta version • Built and Designed by Morpho
             </p>
           </div>

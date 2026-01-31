@@ -170,3 +170,13 @@ export const playNotificationSound = (type) => {
     else navigator.vibrate(200); // Short buzz
   }
 };
+
+// Helper to count total items from the text string
+const calculateTotalItems = (itemsString) => {
+  if (!itemsString) return 0;
+  // Split by new line, find "Nx" at the start, and sum them up
+  return itemsString.split('\n').reduce((total, line) => {
+    const match = line.match(/^(\d+)x/); // Looks for number followed by 'x'
+    return total + (match ? parseInt(match[1]) : 0);
+  }, 0);
+};

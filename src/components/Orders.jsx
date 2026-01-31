@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import {
   ChevronUp,
   ChevronDown,
@@ -13,6 +13,42 @@ import { formatDate } from '../utils';
 import { ChatWindow } from './Chat';
 
 // ==========================================
+// HELPER: PARSE ITEMS SAFELY
+// ==========================================
+const parseItems = (itemsData) => {
+  if (!itemsData) return [];
+
+  // 1. If it's already an array (Local State), return it
+  if (Array.isArray(itemsData)) {
+    return itemsData.map(item => ({
+      ...item,
+      quantity: parseInt(item.quantity) || 1, // Ensure number
+      totalPrice: item.totalPrice || 0
+    }));
+  }
+
+  // 2. If it's a String (Database Format: "2x Coffee\n1x Cake"), Parse it
+  if (typeof itemsData === 'string') {
+    return itemsData.split('\n').map((line) => {
+      // Regex to find "2x Name"
+      const match = line.match(/^(\d+)x\s+(.+)$/);
+      if (match) {
+        return {
+          quantity: parseInt(match[1]),
+          name: match[2],
+          totalPrice: 0, // Price might not be in string, set 0 or handle logic
+          selectedVariant: '',
+          selectedAddOns: []
+        };
+      }
+      return { quantity: 1, name: line, totalPrice: 0, selectedAddOns: [] };
+    });
+  }
+
+  return [];
+};
+
+// ==========================================
 // 1. ORDER TRACKING CARD
 // ==========================================
 
@@ -20,38 +56,33 @@ export const OrderTracking = ({ order, onDismiss }) => {
   const [isExpanded, setIsExpanded] = useState(false);
   const [isChatOpen, setIsChatOpen] = useState(false);
 
+  // --- FIX 1: Normalize Items (Handle String vs Array) ---
+  const normalizedItems = useMemo(() => parseItems(order.items), [order.items]);
+
+  // --- FIX 2: Calculate Total Quantity (Sum of '2x', '1x') ---
+  const itemCount = useMemo(() => {
+    return normalizedItems.reduce((total, item) => total + item.quantity, 0);
+  }, [normalizedItems]);
+
   const getStatusColor = (status) => {
     switch (status) {
-      case 'placed':
-        return 'bg-blue-100 text-blue-700';
-      case 'preparing':
-        return 'bg-amber-100 text-amber-700';
-      case 'ontheway':
-        return 'bg-purple-100 text-purple-700';
-      case 'arrived':
-        // Deep Forest Green Theme
-        return 'bg-[#013E37]/10 text-[#013E37] ring-2 ring-[#013E37]/50';
-      case 'delivered':
-        return 'bg-gray-100 text-gray-700';
-      default:
-        return 'bg-gray-100 text-gray-700';
+      case 'placed': return 'bg-blue-100 text-blue-700';
+      case 'preparing': return 'bg-amber-100 text-amber-700';
+      case 'ontheway': return 'bg-purple-100 text-purple-700';
+      case 'arrived': return 'bg-[#013E37]/10 text-[#013E37] ring-2 ring-[#013E37]/50';
+      case 'delivered': return 'bg-gray-100 text-gray-700';
+      default: return 'bg-gray-100 text-gray-700';
     }
   };
 
   const getStatusProgress = (status) => {
     switch (status) {
-      case 'placed':
-        return 'w-1/4';
-      case 'preparing':
-        return 'w-2/4';
-      case 'ontheway':
-        return 'w-3/4';
-      case 'arrived':
-        return 'w-[90%]';
-      case 'delivered':
-        return 'w-full';
-      default:
-        return 'w-0';
+      case 'placed': return 'w-1/4';
+      case 'preparing': return 'w-2/4';
+      case 'ontheway': return 'w-3/4';
+      case 'arrived': return 'w-[90%]';
+      case 'delivered': return 'w-full';
+      default: return 'w-0';
     }
   };
 
@@ -73,7 +104,7 @@ export const OrderTracking = ({ order, onDismiss }) => {
         <div>
           <div className="flex items-center gap-2">
             <span className="text-xs font-black text-gray-300 tracking-widest">
-              #{String(order.id).slice(-4)}
+              #{String(order.id || order.orderId).slice(-4)}
             </span>
             {isExpanded ? (
               <ChevronUp size={14} className="text-gray-400" />
@@ -81,9 +112,12 @@ export const OrderTracking = ({ order, onDismiss }) => {
               <ChevronDown size={14} className="text-gray-400" />
             )}
           </div>
+          
+          {/* --- FIX 3: Dynamic Count & Grammar --- */}
           <div className="font-bold text-gray-900 text-lg mt-0.5">
-            {order.items.length} Items • ₱{order.total}
+            {itemCount} {itemCount === 1 ? 'Item' : 'Items'} • ₱{order.total}
           </div>
+          
           <div className="text-[10px] text-gray-400 font-medium">
             {formatDate(order.timestamp) || 'Recently'}
           </div>
@@ -136,7 +170,8 @@ export const OrderTracking = ({ order, onDismiss }) => {
       {isExpanded && (
         <div className="mt-4 pt-4 border-t border-dashed border-gray-200 animate-fade-in">
           <div className="space-y-3">
-            {order.items.map((item, idx) => (
+            {/* USE NORMALIZED ITEMS HERE */}
+            {normalizedItems.map((item, idx) => (
               <div
                 key={idx}
                 className="flex justify-between text-sm items-start"
@@ -150,10 +185,10 @@ export const OrderTracking = ({ order, onDismiss }) => {
                       {item.name}
                     </span>
                     {(item.selectedVariant ||
-                      item.selectedAddOns.length > 0) && (
+                      (item.selectedAddOns && item.selectedAddOns.length > 0)) && (
                       <p className="text-xs text-gray-500">
                         {item.selectedVariant}{' '}
-                        {item.selectedAddOns.length > 0 &&
+                        {item.selectedAddOns && item.selectedAddOns.length > 0 &&
                           `+ ${item.selectedAddOns
                             .map((a) => a.name)
                             .join(', ')}`}
@@ -161,9 +196,12 @@ export const OrderTracking = ({ order, onDismiss }) => {
                     )}
                   </div>
                 </div>
-                <span className="text-gray-600 font-bold text-xs">
-                  ₱{item.totalPrice}
-                </span>
+                {/* Only show price if it exists (Strings from DB might not have item-level price) */}
+                {item.totalPrice > 0 && (
+                  <span className="text-gray-600 font-bold text-xs">
+                    ₱{item.totalPrice}
+                  </span>
+                )}
               </div>
             ))}
           </div>
