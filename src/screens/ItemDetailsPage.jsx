@@ -8,28 +8,32 @@ import {
   Snowflake,
   Check,
   ChevronDown,
+  CheckCircle2,
+  Circle
 } from 'lucide-react';
 
 export default function ItemDetailsPage({ item, onBack, onAdd }) {
   const variants = item.variants || [];
+  
+  // 1. NEW: Handle Included Choices (Dips)
+  // If options exist, select the first one by default
+  const hasChoices = item.choiceOptions && item.choiceOptions.length > 0;
+  const [selectedChoice, setSelectedChoice] = useState(
+    hasChoices ? item.choiceOptions[0] : null
+  );
 
   // --- CUSTOM SORTING LOGIC ---
-  // This ensures specific items always appear in the order you want
   const addons = [...(item.addons || [])].sort((a, b) => {
-    // RULE 1: "Dip" always comes first
+    // RULE 1: "Dip" always comes first (if paid add-on)
     if (a.name === 'Dip') return -1;
     if (b.name === 'Dip') return 1;
-
-    // RULE 2: You can add more rules here later (e.g. Rice second)
-    // if (a.name === 'Plain Rice') return -1;
-
-    return 0; // Leave everything else in the order it was saved
+    return 0; 
   });
 
   const [selectedVariant, setSelectedVariant] = useState(
     variants.length > 0 ? variants[0] : null
   );
-  // selectedAddOns structure: [ { name, price, choice: 'Vanilla' } ]
+  
   const [selectedAddOns, setSelectedAddOns] = useState([]);
   const [quantity, setQuantity] = useState(1);
   const [unavailableAction, setUnavailableAction] = useState('Remove it');
@@ -42,22 +46,17 @@ export default function ItemDetailsPage({ item, onBack, onAdd }) {
   const itemTotal = (basePrice + addonsTotal) * quantity;
 
   // --- HANDLERS ---
-
-  // Helper: Count how many times an add-on is selected (for Espresso Shots)
   const getAddonCount = (addonName) =>
     selectedAddOns.filter((a) => a.name === addonName).length;
 
   const handleAddOnToggle = (addon) => {
-    // Check if it's an Espresso Shot (needs counter logic)
     const isCounter =
       addon.name.toLowerCase().includes('shot') ||
       addon.name.toLowerCase().includes('espresso');
 
     if (isCounter) {
-      // Logic handled by updateAddonQuantity, but if clicked on main body, add 1
       updateAddonQuantity(addon, 1);
     } else {
-      // Standard Toggle (Check/Uncheck)
       const exists = selectedAddOns.find((a) => a.name === addon.name);
       if (exists) {
         setSelectedAddOns(selectedAddOns.filter((a) => a.name !== addon.name));
@@ -74,22 +73,15 @@ export default function ItemDetailsPage({ item, onBack, onAdd }) {
 
   const updateAddonQuantity = (addon, delta) => {
     const currentCount = getAddonCount(addon.name);
-    // Limit to reasonable amount (e.g., 0 to 5 shots)
     const newCount = Math.min(Math.max(0, currentCount + delta), 5);
-
-    // Filter out ALL instances of this addon
     const otherAddons = selectedAddOns.filter((a) => a.name !== addon.name);
-
-    // Re-add the new number of instances
     const newInstances = Array(newCount)
       .fill(addon)
-      .map((a) => ({ ...a })); // Clone objects
-
+      .map((a) => ({ ...a }));
     setSelectedAddOns([...otherAddons, ...newInstances]);
   };
 
   const handleOptionChange = (addonName, newOption) => {
-    // Only update the first instance found (standard logic for dropdowns)
     const index = selectedAddOns.findIndex((a) => a.name === addonName);
     if (index !== -1) {
       const newAddons = [...selectedAddOns];
@@ -98,9 +90,33 @@ export default function ItemDetailsPage({ item, onBack, onAdd }) {
     }
   };
 
+  // --- FINAL SUBMIT WRAPPER ---
+  const handleAddToBag = () => {
+    // We combine the "Included Choice" into the addons list 
+    // but with 0 price so it shows up in the order text.
+    let finalAddons = [...selectedAddOns];
+    
+    if (selectedChoice) {
+      // Add as the VERY FIRST item in the list so it's easy to see
+      finalAddons.unshift({
+        name: `[${selectedChoice}]`, // Brackets to indicate it's a choice
+        price: 0,
+        isChoice: true
+      });
+    }
+
+    onAdd(
+      item,
+      finalAddons,
+      quantity,
+      selectedVariant,
+      unavailableAction
+    );
+  };
+
   return (
     <div className="fixed inset-0 bg-white z-50 flex flex-col animate-fade-in font-opensans">
-      {/* 1. Header Image (Fixed Aspect Ratio) */}
+      {/* 1. Header Image */}
       <div className="relative h-72 w-full bg-gray-100 shrink-0">
         {item.image ? (
           <img
@@ -114,7 +130,6 @@ export default function ItemDetailsPage({ item, onBack, onAdd }) {
           </div>
         )}
 
-        {/* Back Button (Glassmorphism) */}
         <button
           onClick={onBack}
           className="absolute top-4 left-4 p-2.5 bg-white/30 backdrop-blur-md border border-white/20 rounded-full text-white shadow-sm hover:bg-white/40 transition-all active:scale-95"
@@ -125,8 +140,6 @@ export default function ItemDetailsPage({ item, onBack, onAdd }) {
 
       {/* 2. Scrollable Content */}
       <div className="flex-1 overflow-y-auto p-6 pb-48">
-        {/* ^^^ FIX: Increased pb-48 to ensure footer doesn't hide content */}
-
         <div className="flex justify-between items-start mb-2">
           <h1 className="text-2xl font-bold text-gray-900 font-poppins leading-tight max-w-[70%]">
             {item.name}
@@ -174,11 +187,40 @@ export default function ItemDetailsPage({ item, onBack, onAdd }) {
           </div>
         )}
 
+        {/* --- NEW: INCLUDED CHOICE SECTION (e.g. Choose Dip) --- */}
+        {hasChoices && (
+          <div className="mb-8 animate-fade-in">
+            <h3 className="font-bold text-indigo-700 mb-3 text-xs uppercase tracking-widest opacity-90 flex items-center gap-2">
+               <CheckCircle2 size={14}/> {item.choiceTitle || "Choose One (Required)"}
+            </h3>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              {item.choiceOptions.map((option, idx) => (
+                <button
+                  key={idx}
+                  onClick={() => setSelectedChoice(option)}
+                  className={`p-4 rounded-2xl border flex items-center gap-3 transition-all text-left ${
+                    selectedChoice === option
+                      ? 'border-indigo-600 bg-indigo-50 text-indigo-800 shadow-sm ring-1 ring-indigo-600'
+                      : 'border-gray-100 text-gray-600 hover:bg-gray-50'
+                  }`}
+                >
+                  <div className={`w-5 h-5 rounded-full border flex items-center justify-center shrink-0 ${
+                     selectedChoice === option ? 'border-indigo-600 bg-indigo-600' : 'border-gray-300 bg-white'
+                  }`}>
+                    {selectedChoice === option && <Circle size={8} fill="white" className="text-white" />}
+                  </div>
+                  <span className="font-bold text-sm">{option}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+
         {/* ADD-ONS SECTION */}
         {addons.length > 0 && (
           <div className="mb-8">
             <h3 className="font-bold text-gray-900 mb-3 text-xs uppercase tracking-widest opacity-80">
-              Customize
+              Customize (Optional)
             </h3>
             <div className="space-y-3">
               {addons.map((addon, idx) => {
@@ -263,17 +305,16 @@ export default function ItemDetailsPage({ item, onBack, onAdd }) {
                           </button>
                         </div>
                       ) : (
-                        // If not espresso, just allow clicking the whole row (handled by wrapper)
                         <div
                           onClick={() => handleAddOnToggle(addon)}
                           className="h-full flex items-center pl-4"
                         >
-                          {/* Empty hit area to ensure row click works */}
+                          {/* Hit area */}
                         </div>
                       )}
                     </div>
 
-                    {/* Options Dropdown (Only if selected AND has options) */}
+                    {/* Options Dropdown */}
                     {isSelected &&
                       !isEspresso &&
                       addon.options &&
@@ -363,15 +404,7 @@ export default function ItemDetailsPage({ item, onBack, onAdd }) {
         </div>
 
         <button
-          onClick={() =>
-            onAdd(
-              item,
-              selectedAddOns,
-              quantity,
-              selectedVariant,
-              unavailableAction
-            )
-          }
+          onClick={handleAddToBag} // UPDATED THIS LINE
           className="w-full bg-[#013E37] text-white py-4 rounded-2xl font-bold text-lg shadow-xl shadow-[#013E37]/20 active:scale-[0.98] transition-transform flex justify-center items-center gap-3"
         >
           <ShoppingBag size={22} /> Add to Bag
