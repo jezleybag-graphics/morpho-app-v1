@@ -808,7 +808,7 @@ export default function App() {
         </div>
       )}
 
-      {/* ✅ FIX 3: Removed duplicate 'showPromo' check */}
+      {/* ✅ FIX 4: Removed duplicate 'showPromo' check */}
       {showStatusPopup && (
         <StatusPopup
           activeOrders={activeOrders.filter(
