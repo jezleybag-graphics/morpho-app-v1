@@ -1,8 +1,5 @@
 import React, { useState } from 'react';
-import { X, Truck, AlertCircle, Home, CheckCircle } from 'lucide-react';
-
-// --- LOCAL IMPORTS ---
-import { ANNOUNCEMENT } from '../data';
+import { Truck, AlertCircle, Home, CheckCircle } from 'lucide-react';
 
 // ==========================================
 // 1. ADDRESS DETAILS FORM
@@ -86,55 +83,7 @@ export const AddressDetailsForm = ({ addressData, onConfirm }) => {
 };
 
 // ==========================================
-// 2. ANNOUNCEMENT MODAL
-// ==========================================
-
-export const AnnouncementModal = ({ onClose }) => (
-  <div className="fixed inset-0 z-[80] flex items-center justify-center p-6 bg-black/60 backdrop-blur-sm animate-fade-in">
-    <div className="bg-[#F4F3F2] rounded-3xl w-full max-w-sm overflow-hidden shadow-2xl relative animate-scaleIn">
-      <button
-        onClick={onClose}
-        className="absolute top-3 right-3 bg-black/20 text-white p-2 rounded-full z-10 hover:bg-black/30 backdrop-blur-md"
-      >
-        <X size={20} />
-      </button>
-
-      {ANNOUNCEMENT.image && (
-        <div className="h-48 bg-gray-200 relative">
-          <img
-            src={ANNOUNCEMENT.image}
-            className="w-full h-full object-cover"
-            alt="Promo"
-          />
-          <div className="absolute inset-0 bg-gradient-to-t from-black/60 to-transparent"></div>
-          <div className="absolute bottom-4 left-4 text-white">
-            <span className="bg-[#013E37] px-2 py-0.5 rounded text-[10px] font-bold uppercase mb-1 inline-block">
-              Promo
-            </span>
-            <h3 className="text-2xl font-bold leading-none">
-              {ANNOUNCEMENT.title}
-            </h3>
-          </div>
-        </div>
-      )}
-
-      <div className="p-6">
-        <p className="text-gray-600 text-sm leading-relaxed mb-6">
-          {ANNOUNCEMENT.message}
-        </p>
-        <button
-          onClick={onClose}
-          className="w-full bg-[#013E37] text-[#F4F3F2] py-3.5 rounded-2xl font-bold shadow-lg shadow-[#013E37]/20 hover:bg-[#013E37]/90 transition-colors"
-        >
-          Got it!
-        </button>
-      </div>
-    </div>
-  </div>
-);
-
-// ==========================================
-// 3. RIDER ARRIVED MODAL
+// 2. RIDER ARRIVED MODAL
 // ==========================================
 
 export const RiderArrivedModal = ({ onClose }) => (
@@ -163,7 +112,7 @@ export const RiderArrivedModal = ({ onClose }) => (
 );
 
 // ==========================================
-// 4. CONFIRMATION MODAL
+// 3. CONFIRMATION MODAL
 // ==========================================
 
 export const ConfirmationModal = ({ onConfirm, onCancel }) => (
