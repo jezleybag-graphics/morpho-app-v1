@@ -5,15 +5,11 @@ import {
   X,
   Plus,
   ChefHat,
-  Trash2,
   Clock,
-  ChevronDown,
-  Zap,
   MapPin,
   User,
   Search,
   Heart,
-  WifiOff,
 } from 'lucide-react';
 
 // --- SCREENS ---
@@ -25,11 +21,9 @@ import Cart from './screens/Cart';
 import SuccessScreen from './screens/SuccessScreen'; 
 
 // --- COMPONENTS ---
-import { LocationPicker, ReadOnlyMap } from './components/Maps';
-import { AnnouncementModal } from './components/AnnouncementModal'; // Imported here
+import { AnnouncementModal } from './components/AnnouncementModal';
 import {
   RiderArrivedModal,
-  ConfirmationModal,
   AddressDetailsForm,
 } from './components/Modals';
 import { StatusPopup } from './components/Orders';
@@ -42,13 +36,14 @@ import { IOSInstallPrompt } from './components/IOSInstallPrompt';
 import { db, GOOGLE_SCRIPT_URL } from './firebase';
 import { collection, getDocs } from 'firebase/firestore';
 
+// ✅ FIX 1: Removed ANNOUNCEMENT from imports completely
 import {
   CATEGORIES,
   MENU_ITEMS as FALLBACK_MENU,
   BRAND_INFO,
-  TIME_SLOTS,
-} from './data'; // Removed ANNOUNCEMENT
-import { convertToMinutes, playNotificationSound } from './utils';
+} from './data'; 
+
+import { playNotificationSound } from './utils';
 import { useAndroidBackButton } from './hooks/useAndroidBackButton';
 
 export default function App() {
@@ -102,11 +97,11 @@ export default function App() {
   // UI State
   const [showStatusPopup, setShowStatusPopup] = useState(false);
   const [showArrivedModal, setShowArrivedModal] = useState(false);
-  
-  const [showMapPicker, setShowMapPicker] = useState(false); 
   const [showDetailsForm, setShowDetailsForm] = useState(false);
   const [selectedLocation, setSelectedLocation] = useState(null);
 
+  // ✅ FIX 2: Removed 'showPromo' state (It was using ANNOUNCEMENT.show)
+  
   // Checkout Form State
   const [tempChangeLocation, setTempChangeLocation] = useState(null);
   const [tempChangeComponents, setTempChangeComponents] = useState(null);
@@ -115,7 +110,6 @@ export default function App() {
   const [deliveryFee, setDeliveryFee] = useState(0);
   const [mapLink, setMapLink] = useState('');
   const [distanceKm, setDistanceKm] = useState(0);
-  const [timingSelection, setTimingSelection] = useState('now');
   const [streetInfo, setStreetInfo] = useState('');
 
   const [formData, setFormData] = useState({
@@ -396,14 +390,6 @@ export default function App() {
   };
 
   const CartTotal = cart.reduce((sum, i) => sum + i.totalPrice, 0);
-
-  const handleMapConfirm = (locData) => {
-    if (locData.fee === -1) return alert('Location too far!');
-    setTempChangeLocation(locData);
-    setTempChangeComponents(locData.streetInfo || { road: '', district: '' });
-    setShowMapPicker(false);
-    setShowDetailsForm(true);
-  };
 
   const handleDetailsConfirm = (houseNo, street, district) => {
     const fullAddress = `${houseNo} ${street}, ${district}, Cuyapo, Nueva Ecija`;
@@ -822,6 +808,7 @@ export default function App() {
         </div>
       )}
 
+      {/* ✅ FIX 3: Removed duplicate 'showPromo' check */}
       {showStatusPopup && (
         <StatusPopup
           activeOrders={activeOrders.filter(
