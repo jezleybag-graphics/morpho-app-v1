@@ -7,6 +7,7 @@ import {
 // LOCAL IMPORTS
 import { GOOGLE_SCRIPT_URL } from '../firebase';
 import { LocationPicker, ReadOnlyMap } from '../components/Maps';
+import { PromoEngine } from '../components/PromoEngine'; // <--- NEW IMPORT
 import { TIME_SLOTS } from '../data';
 import { convertToMinutes } from '../utils';
 
@@ -52,6 +53,10 @@ const Cart = ({
   const [distanceKm, setDistanceKm] = useState(Number(userProfile?.distanceKm) || 0);
   const [coords, setCoords] = useState(null);
 
+  // --- NEW: PROMO STATE ---
+  const [discount, setDiscount] = useState(0);
+  const [appliedPromo, setAppliedPromo] = useState(null);
+
   // REFS
   const pollTimer = useRef(null);
   const paymentWindowRef = useRef(null);
@@ -69,33 +74,20 @@ const Cart = ({
     }
   }, [userProfile]);
 
-  // --- NEW: SAFE PRICE CALCULATOR ---
-  // Calculates the TRUE unit price (Base + Variant + All Addons)
+  // --- SAFE PRICE CALCULATOR ---
   const calculateItemUnitPrice = (item) => {
-    // 1. Start with the base/variant price
     let unitPrice = Number(item.finalPrice || item.price || 0);
-    
-    // 2. Add cost of all add-ons (if they exist and have a price)
     if (item.selectedAddOns && item.selectedAddOns.length > 0) {
       item.selectedAddOns.forEach(addon => {
         const addonPrice = Number(addon.price || 0);
         const addonQty = Number(addon.qty || addon.quantity || 1);
-        // Only add if the price isn't already baked into finalPrice (checking strictly)
-        // Assumption: finalPrice usually tracks Base+Variant. Addons are separate.
-        // If your app bakes addons into finalPrice already, this might double count. 
-        // BUT based on your issue ("bill still there"), it implies finalPrice is static.
-        // We will assume finalPrice DOES NOT include addons to be safe, or calculate strictly:
-        
-        // SAFE APPROACH: If you want to be 100% sure, rely on this math:
-        // We assume 'finalPrice' might NOT include addons. 
-        // To fix "bill still there", we ensure addons are part of the total here.
         unitPrice += (addonPrice * addonQty); 
       });
     }
     return unitPrice;
   };
 
-  // --- HELPER: STRICT FORMATTER (With Grouping) ---
+  // --- HELPER: STRICT FORMATTER ---
   const formatOrderSummary = (items) => {
     return items.map(item => {
       let itemString = `${item.qty || item.quantity}x ${item.name}`;
@@ -109,7 +101,6 @@ const Cart = ({
         itemString += ` (+ ${addonString})`;
       }
       
-      // Pass N/A Action to Admin
       if (item.unavailableAction) {
         itemString += ` {If N/A: ${item.unavailableAction}}`;
       }
@@ -118,7 +109,7 @@ const Cart = ({
     }).join('\n');
   };
 
-  // --- CALCULATIONS (Now uses Safe Calculator) ---
+  // --- CALCULATIONS (Updated with Discount) ---
   const subtotal = cartItems.reduce((sum, item) => {
     const unitPrice = calculateItemUnitPrice(item);
     const qty = Number(item.qty || item.quantity || 1);
@@ -126,7 +117,9 @@ const Cart = ({
   }, 0);
 
   const finalFee = orderMode === 'Delivery' ? deliveryFee : 0;
-  const total = subtotal + finalFee;
+  
+  // NEW MATH: Ensure total never goes below 0
+  const total = Math.max(0, subtotal + finalFee - discount);
 
   // --- HELPER: FINALIZE ORDER ---
   const finalizeOrder = (status) => {
@@ -137,7 +130,9 @@ const Cart = ({
         status: status,
         items: cartItems,
         itemsSummary: itemsSummary,
-        total: total, // Use calculated total
+        total: total, 
+        discount: discount, // Save discount info
+        promoDetails: appliedPromo, // Save promo info
         orderMode: orderMode,
         address: orderMode === 'Delivery' ? address : 'N/A',
         time: selectedTime,
@@ -154,13 +149,20 @@ const Cart = ({
   const saveOrderToSheet = async (status, method) => {
     const itemsSummary = formatOrderSummary(cartItems);
 
+    // Prepare Promo Info for Sheet
+    const promoInfo = appliedPromo 
+      ? `[PROMO: ${appliedPromo.title} (-₱${discount.toFixed(0)})]` 
+      : '';
+
     const payload = {
         orderId: orderIdRef.current,
         name: userProfile.name,
         phone: userProfile.phone,
         address: orderMode === 'Delivery' ? address : 'N/A',
-        items: itemsSummary,
-        total: total, // Use calculated total
+        items: itemsSummary + (promoInfo ? `\n${promoInfo}` : ''), // Append promo to items column so Admin sees it in Sheet
+        total: total, 
+        subtotal: subtotal,
+        discount: discount,
         payment: method,
         orderMode: orderMode,
         time: selectedTime,
@@ -252,14 +254,15 @@ const Cart = ({
     const payload = {
       action: 'create_payment',
       orderId,
-      totalAmount: total, // Use calculated total
+      totalAmount: total, // Use calculated discounted total
       customerName: userProfile.name,
       phone: userProfile.phone,
       email: userProfile.email || "guest@morpho.ph",
       itemsSummary,
       orderMode,
       time: selectedTime,
-      address: orderMode === 'Delivery' ? address : 'N/A'
+      address: orderMode === 'Delivery' ? address : 'N/A',
+      discount: discount // Pass discount info to payment description
     };
 
     try {
@@ -350,7 +353,7 @@ const Cart = ({
                 </div>
               )}
 
-              {/* Items List (VISUAL FIX) */}
+              {/* Items List */}
               <div className="space-y-3">
                  <h3 className="text-xs font-bold text-gray-400 uppercase tracking-wider">Your Items</h3>
                  {cartItems.map((item, idx) => (
@@ -361,7 +364,6 @@ const Cart = ({
                                 <p className="font-bold text-gray-900 text-sm leading-tight">{item.name}</p>
                                 <p className="text-xs text-gray-400 mt-1 font-bold">{item.selectedVariant}</p>
                                 
-                                {/* ADD-ONS VISUALIZATION */}
                                 {item.selectedAddOns && item.selectedAddOns.length > 0 && (
                                   <div className="mt-1 flex flex-col gap-0.5">
                                     {item.selectedAddOns.map((addon, aIdx) => (
@@ -374,7 +376,6 @@ const Cart = ({
                             </div>
                         </div>
                         <div className="flex flex-col items-end justify-between">
-                            {/* Use Safe Calculator for Display */}
                             <span className="font-bold text-sm">₱{calculateItemUnitPrice(item) * (item.quantity || 1)}</span>
                             <button onClick={() => onRemoveItem(idx)} className="text-red-300 hover:text-red-500"><Trash2 size={14} /></button>
                         </div>
@@ -455,6 +456,19 @@ const Cart = ({
                  )}
               </div>
 
+              {/* --- NEW: PROMO ENGINE --- */}
+              <div className="space-y-2">
+                <PromoEngine 
+                  cart={cartItems}
+                  deliveryFee={finalFee}
+                  distanceKm={distanceKm}
+                  onApplyDiscount={(amount, promoData) => {
+                    setDiscount(amount);
+                    setAppliedPromo(promoData);
+                  }}
+                />
+              </div>
+
               {/* Payment Method */}
               <div className="space-y-2">
                 <h3 className="text-xs font-bold text-gray-400 uppercase tracking-wider">Payment</h3>
@@ -470,10 +484,32 @@ const Cart = ({
         {/* FOOTER */}
         {!isMapOpen && (
             <div className="p-5 bg-white border-t border-gray-100 z-10">
-                <div className="flex justify-between items-center mb-4">
-                    <span className="text-gray-500 font-bold text-sm">Total Amount</span>
+                
+                {/* BILL DETAILS (VISUAL BREAKDOWN) */}
+                <div className="space-y-1 mb-4 text-xs font-medium text-gray-500">
+                    <div className="flex justify-between">
+                        <span>Subtotal</span>
+                        <span>₱{subtotal.toFixed(2)}</span>
+                    </div>
+                    {finalFee > 0 && (
+                        <div className="flex justify-between">
+                            <span>Delivery Fee</span>
+                            <span>₱{finalFee.toFixed(2)}</span>
+                        </div>
+                    )}
+                    {discount > 0 && (
+                        <div className="flex justify-between text-[#013E37] font-bold animate-pulse">
+                             <span className="flex items-center gap-1"><Zap size={10} /> Discount ({appliedPromo?.title})</span>
+                             <span>-₱{discount.toFixed(2)}</span>
+                        </div>
+                    )}
+                </div>
+
+                <div className="flex justify-between items-center mb-4 pt-2 border-t border-dashed border-gray-200">
+                    <span className="text-gray-800 font-bold text-sm">Total Amount</span>
                     <span className="text-2xl font-black text-[#013E37]">₱{isNaN(total) ? '0.00' : total.toFixed(2)}</span>
                 </div>
+                
                 <button
                     onClick={paymentMethod === 'ONLINE' ? handleOnlineCheckout : handleCODCheckout}
                     disabled={loading || (orderMode === 'Delivery' && (!address || finalFee === 0))}
