@@ -26,8 +26,8 @@ import SuccessScreen from './screens/SuccessScreen';
 
 // --- COMPONENTS ---
 import { LocationPicker, ReadOnlyMap } from './components/Maps';
+import { AnnouncementModal } from './components/AnnouncementModal'; // Imported here
 import {
-  AnnouncementModal,
   RiderArrivedModal,
   ConfirmationModal,
   AddressDetailsForm,
@@ -45,10 +45,9 @@ import { collection, getDocs } from 'firebase/firestore';
 import {
   CATEGORIES,
   MENU_ITEMS as FALLBACK_MENU,
-  ANNOUNCEMENT,
   BRAND_INFO,
   TIME_SLOTS,
-} from './data';
+} from './data'; // Removed ANNOUNCEMENT
 import { convertToMinutes, playNotificationSound } from './utils';
 import { useAndroidBackButton } from './hooks/useAndroidBackButton';
 
@@ -89,8 +88,6 @@ export default function App() {
   const [activeSubcategory, setActiveSubcategory] = useState('All');
   const [activeItem, setActiveItem] = useState(null);
   const [searchQuery, setSearchQuery] = useState('');
-  const [loading, setLoading] = useState(false);
-  const [showPromo, setShowPromo] = useState(ANNOUNCEMENT.show);
   const [logoError, setLogoError] = useState(false);
 
   const [activeOrders, setActiveOrders] = useState(() => {
@@ -227,12 +224,11 @@ export default function App() {
   useEffect(() => localStorage.setItem('smart_menu_favorites', JSON.stringify(favorites)), [favorites]);
 
   // ------------------------------------------------------------
-  // --- STATUS POLLING (FIXED: SANITIZED PHONE & ROBUST ID) ---
+  // --- STATUS POLLING ---
   // ------------------------------------------------------------
   useEffect(() => {
     let intervalId;
 
-    // Helper: Match "ORD-123" with "123" or "Order #123"
     const areIdsEqual = (id1, id2) => {
       if (!id1 || !id2) return false;
       const s1 = String(id1).replace(/[^0-9]/g, ''); 
@@ -243,8 +239,6 @@ export default function App() {
     if (user && user.phone) {
       const syncOrders = async () => {
         try {
-          // 1. FIX: Sanitize Phone (Remove spaces/dashes) before query
-          // This prevents "No orders found" if user typed "0917 123" but sheet has "0917123"
           const cleanPhone = user.phone.replace(/[^0-9+]/g, ''); 
           
           const response = await fetch(
@@ -259,14 +253,10 @@ export default function App() {
               setActiveOrders((prevLocalOrders) => {
                 const serverOrders = data.orders;
 
-                // 2. Process Server Data (The Source of Truth)
                 const mergedServerOrders = serverOrders.map(serverOrder => {
-                  // FIX: Handle Server ID variations (id, orderId, OrderId)
                   const serverId = serverOrder.id || serverOrder.orderId || serverOrder.OrderId || "UNKNOWN";
-                  
                   const localMatch = prevLocalOrders.find(local => areIdsEqual(local.id, serverId));
                   
-                  // Status Normalization (Aggressive Mapping)
                   const rawStatus = (serverOrder.status || '').toLowerCase().trim();
                   let finalStatus = rawStatus.replace(/\s+/g, '');
                   
@@ -290,26 +280,20 @@ export default function App() {
                     itemsSummary: localMatch?.itemsSummary || serverOrder.itemsSummary,
                     orderMode: localMatch?.orderMode || serverOrder.orderMode || 'Delivery',
                     total: serverOrder.total || localMatch?.total,
-                    // FIX: Ensure ID persists correctly
                     id: localMatch?.id || serverId
                   };
                 });
 
-                // 3. Paranoid Retention (Buffer for lag)
-                // If server returns empty list (maybe network blip), keep local data UNLESS it's clearly finished
                 const ghostOrders = prevLocalOrders.filter(local => {
                   const isInServer = serverOrders.some(s => areIdsEqual(s.id || s.orderId, local.id));
                   if (isInServer) return false; 
-
                   if (local.status === 'delivered' || local.status === 'cancelled') return false;
-
                   return true; 
                 });
 
                 const finalOrders = [...mergedServerOrders, ...ghostOrders];
 
                 if (JSON.stringify(finalOrders) !== JSON.stringify(prevLocalOrders)) {
-                    console.log("Updated Orders from Server:", finalOrders); // Debug Log
                     return finalOrders;
                 }
                 return prevLocalOrders;
@@ -360,7 +344,6 @@ export default function App() {
     );
   };
 
-  // --- DYNAMIC FILTERING ---
   const subcategories = useMemo(() => {
     const currentItems = menuItems.length > 0 ? menuItems : FALLBACK_MENU;
     const subs = currentItems
@@ -542,8 +525,16 @@ export default function App() {
   return (
     <div className="min-h-[100dvh] bg-gray-50 pb-32 font-opensans text-gray-900 relative">
       <style>{`.font-poppins { font-family: 'Poppins', sans-serif; } .font-opensans { font-family: 'Open Sans', sans-serif; }`}</style>
-      <NetworkStatus /> <InAppBrowserBlocker /> <AndroidInstallPrompt />{' '}
+      
+      {/* --- SYSTEM OVERLAYS --- */}
+      <NetworkStatus /> 
+      <InAppBrowserBlocker /> 
+      <AndroidInstallPrompt />
       <IOSInstallPrompt />
+      
+      {/* --- NEW: Smart Announcement Modal (Self-Managed) --- */}
+      <AnnouncementModal />
+
       {/* HEADER */}
       <div className="bg-[#013E37]/85 backdrop-blur-xl sticky top-0 z-30 shadow-lg border-b border-white/10 font-poppins pt-[env(safe-area-inset-top)]">
         <div className="px-5 py-4 flex justify-between items-center">
@@ -786,32 +777,23 @@ export default function App() {
             newCart.splice(index, 1);
             setCart(newCart);
 
-            // FIX: Close the cart window immediately if empty
             if (newCart.length === 0) {
               setIsCartOpen(false);
               localStorage.removeItem('smart_menu_cart');
             }
           }}
-          // UPDATED: Use "Functional Update" to prevent losing the order
           onSuccess={(newOrder) => {
             console.log("Processing Successful Order:", newOrder);
 
-            // 1. Safe State Update (prev => ...)
             setActiveOrders((prevOrders) => {
-              // Create the new list based on the LATEST state
               const updated = [...prevOrders, newOrder];
-              
-              // Save to Storage immediately using this correct list
               localStorage.setItem('smart_menu_active_orders', JSON.stringify(updated));
-              
               return updated;
             });
             
-            // 2. Clear Cart
             setCart([]);
             localStorage.removeItem('smart_menu_cart');
             
-            // 3. Close Modal and Show Success View
             setIsCartOpen(false);
             setView('success');
           }}
@@ -840,7 +822,6 @@ export default function App() {
         </div>
       )}
 
-      {showPromo && <AnnouncementModal onClose={() => setShowPromo(false)} />}
       {showStatusPopup && (
         <StatusPopup
           activeOrders={activeOrders.filter(

@@ -49,23 +49,26 @@ const parseItems = (itemsData) => {
 };
 
 // ==========================================
-// 1. ORDER TRACKING CARD
+// 1. ORDER TRACKING CARD (FIXED)
 // ==========================================
 
 export const OrderTracking = ({ order, onDismiss }) => {
   const [isExpanded, setIsExpanded] = useState(false);
   const [isChatOpen, setIsChatOpen] = useState(false);
 
-  // --- FIX 1: Normalize Items (Handle String vs Array) ---
+  // --- FIX 1: Normalize Items ---
   const normalizedItems = useMemo(() => parseItems(order.items), [order.items]);
 
-  // --- FIX 2: Calculate Total Quantity (Sum of '2x', '1x') ---
+  // --- FIX 2: Calculate Total Quantity ---
   const itemCount = useMemo(() => {
     return normalizedItems.reduce((total, item) => total + item.quantity, 0);
   }, [normalizedItems]);
 
-  const getStatusColor = (status) => {
-    switch (status) {
+  // --- FIX 3: NORMALIZE STATUS (Handles "Delivered" vs "delivered") ---
+  const status = (order.status || '').toLowerCase(); // Force lowercase
+
+  const getStatusColor = (s) => {
+    switch (s) {
       case 'placed': return 'bg-blue-100 text-blue-700';
       case 'preparing': return 'bg-amber-100 text-amber-700';
       case 'ontheway': return 'bg-purple-100 text-purple-700';
@@ -75,8 +78,8 @@ export const OrderTracking = ({ order, onDismiss }) => {
     }
   };
 
-  const getStatusProgress = (status) => {
-    switch (status) {
+  const getStatusProgress = (s) => {
+    switch (s) {
       case 'placed': return 'w-1/4';
       case 'preparing': return 'w-2/4';
       case 'ontheway': return 'w-3/4';
@@ -91,7 +94,7 @@ export const OrderTracking = ({ order, onDismiss }) => {
   return (
     <div
       className={`border rounded-3xl p-5 shadow-sm relative overflow-hidden transition-all bg-white mb-4 ${
-        order.status === 'arrived'
+        status === 'arrived'
           ? 'border-[#013E37] ring-2 ring-[#013E37]/10'
           : 'border-gray-100'
       }`}
@@ -113,7 +116,6 @@ export const OrderTracking = ({ order, onDismiss }) => {
             )}
           </div>
           
-          {/* --- FIX 3: Dynamic Count & Grammar --- */}
           <div className="font-bold text-gray-900 text-lg mt-0.5">
             {itemCount} {itemCount === 1 ? 'Item' : 'Items'} • ₱{order.total}
           </div>
@@ -122,12 +124,12 @@ export const OrderTracking = ({ order, onDismiss }) => {
             {formatDate(order.timestamp) || 'Recently'}
           </div>
         </div>
+        
+        {/* Pass normalized 'status' here */}
         <span
-          className={`px-3 py-1.5 rounded-full text-[10px] font-bold uppercase tracking-wide ${getStatusColor(
-            order.status
-          )}`}
+          className={`px-3 py-1.5 rounded-full text-[10px] font-bold uppercase tracking-wide ${getStatusColor(status)}`}
         >
-          {order.status === 'arrived' ? 'Rider Arrived' : order.status}
+          {status === 'arrived' ? 'Rider Arrived' : status}
         </span>
       </div>
 
@@ -135,24 +137,22 @@ export const OrderTracking = ({ order, onDismiss }) => {
       <div className="relative pt-2 pb-1">
         <div className="h-2 w-full bg-gray-100 rounded-full overflow-hidden">
           <div
-            className={`h-full bg-[#013E37] rounded-full transition-all duration-1000 ease-out ${getStatusProgress(
-              order.status
-            )}`}
+            className={`h-full bg-[#013E37] rounded-full transition-all duration-1000 ease-out ${getStatusProgress(status)}`}
           ></div>
         </div>
 
         {/* Status Text & Chat Button */}
         <div className="flex justify-between items-center mt-2">
           <p className="text-[10px] text-[#013E37] font-bold">
-            {order.status === 'placed' && 'Order Received'}
-            {order.status === 'preparing' && 'Kitchen is preparing'}
-            {order.status === 'ontheway' && 'On the way to you'}
-            {order.status === 'arrived' && 'Rider is here!'}
-            {order.status === 'delivered' && 'Delivered'}
+            {status === 'placed' && 'Order Received'}
+            {status === 'preparing' && 'Kitchen is preparing'}
+            {status === 'ontheway' && 'On the way to you'}
+            {status === 'arrived' && 'Rider is here!'}
+            {status === 'delivered' && 'Delivered'}
           </p>
 
           {/* CHAT BUTTON - Only shows when On The Way */}
-          {order.status === 'ontheway' && (
+          {status === 'ontheway' && (
             <button
               onClick={(e) => {
                 e.stopPropagation();
@@ -170,7 +170,6 @@ export const OrderTracking = ({ order, onDismiss }) => {
       {isExpanded && (
         <div className="mt-4 pt-4 border-t border-dashed border-gray-200 animate-fade-in">
           <div className="space-y-3">
-            {/* USE NORMALIZED ITEMS HERE */}
             {normalizedItems.map((item, idx) => (
               <div
                 key={idx}
@@ -196,7 +195,6 @@ export const OrderTracking = ({ order, onDismiss }) => {
                     )}
                   </div>
                 </div>
-                {/* Only show price if it exists (Strings from DB might not have item-level price) */}
                 {item.totalPrice > 0 && (
                   <span className="text-gray-600 font-bold text-xs">
                     ₱{item.totalPrice}
@@ -206,8 +204,8 @@ export const OrderTracking = ({ order, onDismiss }) => {
             ))}
           </div>
 
-          {/* Confirm Receipt Button */}
-          {order.status === 'delivered' && (
+          {/* Confirm Receipt Button - Checks normalized status */}
+          {status === 'delivered' && (
             <div className="mt-5 pt-3 border-t border-gray-100">
               <button
                 onClick={(e) => {

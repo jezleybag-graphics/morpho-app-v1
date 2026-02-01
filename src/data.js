@@ -7,14 +7,6 @@ export const CAFE_LOCATION = [15.7772789, 120.661612];
 
 export const CATEGORIES = ['Coffee & Drinks', 'Meals & Snacks'];
 
-export const ANNOUNCEMENT = {
-  show: true,
-  title: 'Grand Opening Promo!',
-  message: "Get 10% OFF on all 'Featured' items this week. Order now!",
-  image:
-    'https://images.unsplash.com/photo-1513558161293-cdaf765ed2fd?auto=format&fit=crop&q=80&w=600',
-};
-
 export const TIME_SLOTS = [
   'ASAP',
   '10:30 AM',
